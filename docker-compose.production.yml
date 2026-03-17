@@ -1,0 +1,44 @@
+services:
+  indexsphere:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    image: indexsphere:production
+    container_name: indexsphere-prod
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # JWT_SECRET must be set in your shell environment or a .env file.
+      # Generate one with: openssl rand -hex 32
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET environment variable is required}
+      - NEXT_TELEMETRY_DISABLED=1
+      - HOSTNAME=0.0.0.0
+      - PORT=3000
+    volumes:
+      - indexsphere-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    networks:
+      - indexsphere-network
+
+volumes:
+  indexsphere-data:
+    driver: local
+
+networks:
+  indexsphere-network:
+    driver: bridge

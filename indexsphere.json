@@ -1,0 +1,86 @@
+{
+  "server": {
+    "port": 3000,
+    "host": "0.0.0.0",
+    "cors": {
+      "enabled": true,
+      "origins": [
+        "*"
+      ]
+    },
+    "rateLimit": {
+      "enabled": true,
+      "windowMs": 900000,
+      "maxRequests": 100
+    }
+  },
+  "database": {
+    "path": "./data/indexsphere.db",
+    "backupInterval": 24,
+    "maxBackups": 7
+  },
+  "security": {
+    "jwtSecret": "build-time-placeholder-not-used-for-signing",
+    "jwtExpiresIn": "24h",
+    "bcryptRounds": 12,
+    "sessionTimeout": 480,
+    "maxLoginAttempts": 5,
+    "lockoutDuration": 15,
+    "auditLogging": true,
+    "requireStrongPasswords": false
+  },
+  "elasticsearch": {
+    "connectionTimeout": 10000,
+    "requestTimeout": 30000,
+    "maxRetries": 3,
+    "retryDelay": 1000,
+    "defaultType": "elasticsearch"
+  },
+  "logging": {
+    "level": "info",
+    "file": {
+      "enabled": true,
+      "path": "./logs/indexsphere.log",
+      "maxSize": "10M",
+      "maxFiles": 5
+    },
+    "console": {
+      "enabled": true,
+      "colorize": true
+    }
+  },
+  "features": {
+    "userManagement": true,
+    "savedConnections": true,
+    "clusterAnalysis": true,
+    "indexManagement": true,
+    "templateManagement": true,
+    "snapshotManagement": true,
+    "queryInterface": true,
+    "restInterface": true
+  },
+  "debug": {
+    "enabled": false,
+    "level": "info",
+    "components": {
+      "authentication": false,
+      "database": false,
+      "elasticsearch": false,
+      "api": false,
+      "userManagement": false
+    }
+  },
+  "ui": {
+    "theme": "auto",
+    "pageSize": 25,
+    "autoRefresh": {
+      "enabled": false,
+      "interval": 30
+    },
+    "notifications": {
+      "enabled": true,
+      "position": "top-right",
+      "duration": 5000
+    }
+  }
+}

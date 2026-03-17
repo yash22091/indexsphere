@@ -1,0 +1,71 @@
+services:
+  indexsphere:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    image: indexsphere:production
+    container_name: indexsphere-prod
+    expose:
+      - "3000"
+    environment:
+      - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET environment variable is required}
+      - NEXT_TELEMETRY_DISABLED=1
+      - HOSTNAME=0.0.0.0
+      - PORT=3000
+    volumes:
+      - indexsphere-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - indexsphere-network
+
+  certgen:
+    image: alpine
+    container_name: cert-generator
+    entrypoint: >
+      sh -c "
+      apk add --no-cache openssl && \
+      [ -f /certs/fullchain.pem ] || (
+        echo '[certgen] Creating self-signed cert...' && \
+        openssl req -x509 -nodes -days 3650 \
+          -newkey rsa:2048 \
+          -keyout /certs/privkey.pem \
+          -out /certs/fullchain.pem \
+          -subj '/C=IN/ST=Gujarat/L=Gandhinagar/O=IndexSphere/CN=localhost' \
+          -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+      ) && echo '[certgen] Certs ready.'"
+    volumes:
+      - ./certs:/certs
+    networks:
+      - indexsphere-network
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx-https
+    depends_on:
+      indexsphere:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks:
+      - indexsphere-network
+
+volumes:
+  indexsphere-data:
+    driver: local
+
+networks:
+  indexsphere-network:
+    driver: bridge
+

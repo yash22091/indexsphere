@@ -1,0 +1,70 @@
+{
+  "server": {
+    "port": 3000,
+    "host": "0.0.0.0",
+    "cors": {
+      "enabled": true,
+      "origins": [
+        "*"
+      ]
+    },
+    "rateLimit": {
+      "enabled": true,
+      "windowMs": 900000,
+      "maxRequests": 100
+    }
+  },
+  "database": {
+    "path": "./data/database.json",
+    "backupInterval": 24,
+    "maxBackups": 7
+  },
+  "security": {
+    "jwtSecret": "REPLACE_VIA_JWT_SECRET_ENV_VAR",
+    "jwtExpiresIn": "24h",
+    "bcryptRounds": 12,
+    "sessionTimeout": 480,
+    "maxLoginAttempts": 5,
+    "lockoutDuration": 15
+  },
+  "elasticsearch": {
+    "defaultTimeout": 30000,
+    "maxRetries": 3,
+    "defaultConcurrency": 5
+  },
+  "opensearch": {
+    "defaultTimeout": 30000,
+    "maxRetries": 3,
+    "defaultConcurrency": 5
+  },
+  "ui": {
+    "theme": "system",
+    "itemsPerPage": 50,
+    "refreshInterval": 30,
+    "enableAnimations": true,
+    "showAdvancedFeatures": true
+  },
+  "monitoring": {
+    "enabled": true,
+    "metricsRetention": 7,
+    "alertsEnabled": true,
+    "logLevel": "info"
+  },
+  "features": {
+    "clusterAnalysis": true,
+    "searchAnalytics": true,
+    "dataVisualization": true,
+    "bulkOperations": true,
+    "snapshotManagement": true,
+    "indexLifecycleManagement": true,
+    "userManagement": true,
+    "auditLogging": false
+  },
+  "performance": {
+    "cacheEnabled": true,
+    "cacheTTL": 300,
+    "compressionEnabled": true,
+    "maxConcurrentQueries": 10,
+    "queryTimeout": 60000
+  }
+}

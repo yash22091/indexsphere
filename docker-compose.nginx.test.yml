@@ -1,0 +1,6 @@
+# Test override — maps nginx to non-conflicting host ports
+# Usage:
+#   HTTP_PORT=8181 HTTPS_PORT=8444 \
+#   docker compose -f docker-compose.nginx.yml -f docker-compose.nginx.test.yml up -d
+#
+# In production just run without this override file (defaults: 80/443)

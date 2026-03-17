@@ -1,0 +1,69 @@
+# Multi-stage build for production optimization
+FROM node:18-alpine AS base
+
+# ── deps: install ALL dependencies (including devDeps for native module compilation) ──
+FROM base AS deps
+# libc6-compat for glibc shims; python3/make/g++ compile better-sqlite3 native addon
+RUN apk add --no-cache libc6-compat python3 make g++ sqlite-dev
+
+WORKDIR /app
+COPY package.json package-lock.json* ./
+# Full install (devDeps needed for TS build + native addon compilation)
+RUN npm ci && npm cache clean --force
+
+# ── builder: compile TypeScript / Next.js ────────────────────────────────────
+FROM base AS builder
+RUN apk add --no-cache python3 make g++ sqlite-dev
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json package-lock.json* ./
+COPY src/            ./src/
+COPY public/         ./public/
+COPY next.config.ts  ./
+COPY tsconfig.json   ./
+COPY postcss.config.mjs ./
+COPY components.json ./
+COPY next-env.d.ts   ./
+COPY indexsphere.production.json ./indexsphere.json
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+RUN npm run build
+
+# ── runner: lean production image ────────────────────────────────────────────
+FROM base AS runner
+WORKDIR /app
+
+# chromium+friends for Puppeteer PDF; sqlite-libs for better-sqlite3 native addon
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    sqlite-libs \
+    && rm -rf /var/cache/apk/* /tmp/*
+
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser  --system --uid 1001 nextjs
+
+RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
+
+COPY --from=builder /app/public                                ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static    ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/indexsphere.json ./indexsphere.json
+
+USER nextjs
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

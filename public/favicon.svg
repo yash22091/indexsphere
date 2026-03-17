@@ -1,0 +1,37 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle with gradient -->
+  <defs>
+    <linearGradient id="faviconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1E40AF;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Main circle -->
+  <circle cx="32" cy="32" r="30" fill="url(#faviconGradient)" stroke="#1E40AF" stroke-width="4"/>
+  
+  <!-- Index sphere representation -->
+  <g transform="translate(32,32)">
+    <!-- Center core -->
+    <circle cx="0" cy="0" r="6" fill="#FFFFFF" opacity="0.9"/>
+    
+    <!-- Data nodes -->
+    <circle cx="-14" cy="-8" r="3" fill="#FBBF24"/>
+    <circle cx="14" cy="-8" r="3" fill="#FBBF24"/>
+    <circle cx="-14" cy="8" r="3" fill="#FBBF24"/>
+    <circle cx="14" cy="8" r="3" fill="#FBBF24"/>
+    <circle cx="0" cy="-16" r="3" fill="#FBBF24"/>
+    <circle cx="0" cy="16" r="3" fill="#FBBF24"/>
+    
+    <!-- Connection lines -->
+    <line x1="0" y1="0" x2="-14" y2="-8" stroke="#FFFFFF" stroke-width="2" opacity="0.6"/>
+    <line x1="0" y1="0" x2="14" y2="-8" stroke="#FFFFFF" stroke-width="2" opacity="0.6"/>
+    <line x1="0" y1="0" x2="-14" y2="8" stroke="#FFFFFF" stroke-width="2" opacity="0.6"/>
+    <line x1="0" y1="0" x2="14" y2="8" stroke="#FFFFFF" stroke-width="2" opacity="0.6"/>
+    <line x1="0" y1="0" x2="0" y2="-16" stroke="#FFFFFF" stroke-width="2" opacity="0.6"/>
+    <line x1="0" y1="0" x2="0" y2="16" stroke="#FFFFFF" stroke-width="2" opacity="0.6"/>
+  </g>
+  
+  <!-- Letter "I" in the center for Indexsphere -->
+  <text x="32" y="40" font-family="Inter, system-ui, sans-serif" font-size="24" font-weight="bold" text-anchor="middle" fill="#FFFFFF">I</text>
+</svg>
