@@ -29,9 +29,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1G        # Node (~550 MB peak) + headless Chromium for PDF reports
         reservations:
-          memory: 256M
+          memory: 384M
     networks:
       - indexsphere-network
 

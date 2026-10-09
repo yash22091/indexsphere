@@ -6,29 +6,34 @@
  * Returns a side-by-side diff of indices, templates, and cluster settings.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest } from '@/lib/auth';
-import { getDatabase, decryptValue } from '@/lib/database-sqlite';
+import { AuthUser, getUserFromRequest } from '@/lib/auth';
 import { ElasticsearchClient } from '@/lib/elasticsearch';
+import { assertMayUseAdHocConnection, configFromSavedConnection, getSavedConnectionForUser } from '@/lib/cluster-session';
 import { ElasticsearchConnectionConfig } from '@/types';
 
-interface ConnSpec { url: string; username?: string; password?: string; }
+interface ConnSpec { url: string; username?: string; password?: string; verifyTls?: boolean; }
 
-async function buildClientFromSpec(spec: ConnSpec): Promise<ElasticsearchClient> {
-  const config: ElasticsearchConnectionConfig = {
-    url: spec.url,
-    type: 'elasticsearch',
-    ...(spec.username && spec.password ? { auth: { username: spec.username, password: spec.password } } : {}),
-  };
-  const client = new ElasticsearchClient(config, false);
+async function buildClient(config: ElasticsearchConnectionConfig): Promise<ElasticsearchClient> {
+  // sslBypassFetch (inside the client) SSRF-guards the destination
+  const client = new ElasticsearchClient({ ...config, url: config.url.replace(/\/+$/, '') }, false);
   await client.detectServerType();
   return client;
 }
 
-async function buildClientFromSavedId(id: string): Promise<ElasticsearchClient | null> {
-  const conn = getDatabase().getSavedConnectionById(id);
-  if (!conn) return null;
-  const pw = conn.password_enc ? decryptValue(conn.password_enc) : undefined;
-  return buildClientFromSpec({ url: conn.url, username: conn.username, password: pw });
+async function buildClientFromSpec(spec: ConnSpec): Promise<ElasticsearchClient> {
+  return buildClient({
+    url: spec.url,
+    type: 'elasticsearch',
+    verifyTls: spec.verifyTls === true,
+    ...(spec.username && spec.password ? { auth: { username: spec.username, password: spec.password } } : {}),
+  });
+}
+
+/** Only saved connections the caller's role may use (others look like "not found"). */
+async function buildClientFromSavedId(id: string, user: AuthUser): Promise<ElasticsearchClient | null> {
+  const conn = getSavedConnectionForUser(id, user);
+  if (conn instanceof NextResponse) return null;
+  return buildClient(configFromSavedConnection(conn));
 }
 
 function diffStringArrays(a: string[], b: string[]): { onlyInA: string[]; onlyInB: string[]; inBoth: string[] } {
@@ -48,17 +53,22 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { connectionAId, connectionBId, connectionA, connectionB } = body;
 
+  if ((!connectionAId && connectionA?.url) || (!connectionBId && connectionB?.url)) {
+    const denied = assertMayUseAdHocConnection(user);
+    if (denied) return denied;
+  }
+
   let clientA: ElasticsearchClient | null = null;
   let clientB: ElasticsearchClient | null = null;
 
   try {
-    if (connectionAId) clientA = await buildClientFromSavedId(connectionAId);
+    if (connectionAId) clientA = await buildClientFromSavedId(connectionAId, user);
     else if (connectionA?.url) clientA = await buildClientFromSpec(connectionA);
   } catch (err: unknown) {
     return NextResponse.json({ error: `Cluster A error: ${err instanceof Error ? err.message : err}` }, { status: 400 });
   }
   try {
-    if (connectionBId) clientB = await buildClientFromSavedId(connectionBId);
+    if (connectionBId) clientB = await buildClientFromSavedId(connectionBId, user);
     else if (connectionB?.url) clientB = await buildClientFromSpec(connectionB);
   } catch (err: unknown) {
     return NextResponse.json({ error: `Cluster B error: ${err instanceof Error ? err.message : err}` }, { status: 400 });

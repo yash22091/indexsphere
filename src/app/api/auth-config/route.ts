@@ -166,9 +166,8 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   debugLog.api.request('PATCH', '/api/auth-config');
 
-  let adminUser;
   try {
-    adminUser = requireAdmin(request);
+    requireAdmin(request);
   } catch (errResponse) {
     return errResponse as NextResponse;
   }

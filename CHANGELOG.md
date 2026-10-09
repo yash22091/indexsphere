@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-10-09
+
+### Added
+- **ClickHouse support.**
+  - Pages: overview with live metrics, database/table explorer, query activity (slow, failed, heaviest patterns, kill), SQL workbench (safety limits, EXPLAIN, server-side cancel).
+  - Table advisor that grades tables against the ClickHouse best-practice rules.
+  - ClickHouse metrics in alert rules.
+- **Elasticsearch → ClickHouse migration.** Table planning from the live mapping (with measured cardinality), plus background data copy with row-parity verification and a storage comparison.
+- **Security posture audit** for both engines. Includes detection of public demo TLS certificates, demo users, anonymous access, open CORS, missing snapshots/backups, risky ClickHouse grants and logging gaps.
+- **Vulnerability intelligence.** NVD + OSV matching for the exact running versions, CISA KEV and EPSS context, upgrade recommendation.
+- **Configuration drift detection.** Nightly and manual snapshots with before/after diffs.
+- **SMTP settings page**, sign-in policy page and account unlock.
+- **⌘K command palette**, grouped navigation with live connection status, new sign-in screen and design system.
+- **Documentation set** in `docs/` (installation, configuration, user guide, ClickHouse, vulnerabilities, security, operations, troubleshooting, development, API).
+
+### Security
+- Per-user server-side cluster sessions; cluster credentials never reach the browser.
+- Authentication on every API route. The forced password change is enforced on the API. Tokens are revoked on restart and on user deletion or deactivation, and role changes apply immediately.
+- Role enforcement on the Elasticsearch proxy and on ClickHouse SQL (server-enforced `readonly=2`).
+- SSRF guard for cluster, AI-provider and webhook URLs (with connect-time DNS re-check).
+- Fixed SQL injection via JSON keys in dynamic UPDATEs.
+- Fixed saved-connection role filtering.
+- Admin-only global AI endpoint.
+- Escaped, sandboxed PDF rendering.
+- CSV formula-injection protection.
+- Dependency upgrades: 0 known vulnerabilities in production dependencies.
+
+### Changed
+- Docker image on Node 22 LTS with a capped V8 heap. Native bcrypt keeps sign-ins off the event loop.
+- Keep-alive connection pools to clusters; the proxy passes responses through without re-serialisation.
+- The scheduler starts exactly once per process, picks up edited schedules and never overlaps runs.
+- Scheduled reports record email delivery failures instead of reporting success.
+
+### Fixed
+- Query workbench crash.
+- Search analytics showed generated numbers; it now shows measured rates.
+- Cluster compare request format and template comparison.
+- Alerts with notification channels were rejected.
+- Audit trail dates.
+- Scheduled-report status display.
+- `INDEXSPHERE_DB_PATH` was ignored.
+- Login was impossible over plain HTTP; `COOKIE_SECURE` was added.
+
 ## [2.0.0] - 2026-03-17
 
 ### Added — New Pages

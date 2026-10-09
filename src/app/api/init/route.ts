@@ -1,27 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/database';
+import { NextResponse } from 'next/server';
+import { getDatabase } from '@/lib/database-sqlite';
 
-export async function GET(request: NextRequest) {
+// Public first-run probe: only reports whether setup is needed.
+export async function GET() {
   try {
-    const db = getDatabase();
-    const users = await db.getUsers();
-    
-    const hasUsers = users.length > 0;
+    const users = await getDatabase().getUsers();
     const hasAdmin = users.some(u => u.role === 'admin');
-    
-    return NextResponse.json({
-      initialized: hasUsers,
-      hasAdmin,
-      userCount: users.length,
-      needsSetup: !hasUsers || !hasAdmin
-    });
+    return NextResponse.json({ initialized: users.length > 0, hasAdmin, needsSetup: !hasAdmin });
   } catch (error) {
     console.error('Init check error:', error);
-    return NextResponse.json({
-      initialized: false,
-      hasAdmin: false,
-      userCount: 0,
-      needsSetup: true
-    });
+    return NextResponse.json({ initialized: false, hasAdmin: false, needsSetup: true });
   }
 }

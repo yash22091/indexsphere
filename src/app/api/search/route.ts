@@ -1,24 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getElasticsearchClient } from '@/lib/elasticsearch';
-import { getUserFromRequest } from '@/lib/auth';
+import { requireClusterAccess } from '@/lib/cluster-session';
 
 // Execute search queries
 export async function POST(request: NextRequest) {
-  const user = getUserFromRequest(request);
-  if (!user) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-  }
+  const ctx = requireClusterAccess(request, 'POST', '/_search');
+  if (ctx instanceof NextResponse) return ctx;
+  const client = ctx.session.client;
 
   try {
-    const client = getElasticsearchClient();
-    
-    if (!client) {
-      return NextResponse.json(
-        { error: 'No Elasticsearch client configured' },
-        { status: 500 }
-      );
-    }
-
     const body = await request.json();
     const { index, query } = body;
 
@@ -30,7 +19,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Execute search using existing method
-    const result = await client.search(index, query);
+    const result = await client.search(encodeURIComponent(index).replace(/%2C/gi, ',').replace(/%2A/gi, '*'), query);
     
     return NextResponse.json(result);
 
@@ -46,21 +35,11 @@ export async function POST(request: NextRequest) {
 
 // Get search templates
 export async function GET(request: NextRequest) {
-  const user = getUserFromRequest(request);
-  if (!user) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-  }
+  const ctx = requireClusterAccess(request, 'GET', '/_cluster/state/metadata');
+  if (ctx instanceof NextResponse) return ctx;
+  const client = ctx.session.client;
 
   try {
-    const client = getElasticsearchClient();
-    
-    if (!client) {
-      return NextResponse.json(
-        { error: 'No Elasticsearch client configured' },
-        { status: 500 }
-      );
-    }
-
     // Get stored search templates (gracefully returns empty on unsupported servers)
     const templates = await client.getSearchTemplates();
     

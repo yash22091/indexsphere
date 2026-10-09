@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getElasticsearchClient, ElasticsearchClient } from '@/lib/elasticsearch';
-import { sslBypassFetch } from '@/lib/ssl-bypass';
+import { getUserFromRequest } from '@/lib/auth';
+import { requireClusterAccess, assertMayUseAdHocConnection } from '@/lib/cluster-session';
+import { ElasticsearchClient } from '@/lib/elasticsearch';
+import { csvCell, csvRow } from '@/lib/csv';
 
-export async function GET() {
+/** GET — health of the caller's active cluster session. */
+export async function GET(request: NextRequest) {
+  const ctx = requireClusterAccess(request, 'GET', '/_cluster/health');
+  if (ctx instanceof NextResponse) return ctx;
+
   try {
-    const client = getElasticsearchClient();
-    if (!client) {
-      return NextResponse.json(
-        { error: 'No Elasticsearch client available. Please connect first.' },
-        { status: 400 }
-      );
-    }
-
-    const health = await client.getClusterHealth();
+    const health = await ctx.session.client.getClusterHealth();
     return NextResponse.json(health);
   } catch (error: any) {
     console.error('Error fetching cluster health:', error);
@@ -23,41 +21,29 @@ export async function GET() {
   }
 }
 
+/** POST — test an ad-hoc cluster URL (does not change the caller's session). */
 export async function POST(request: NextRequest) {
-  try {
-    const config = await request.json();
-    const { url, auth } = config;
+  const user = getUserFromRequest(request);
+  if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  const denied = assertMayUseAdHocConnection(user);
+  if (denied) return denied;
 
+  try {
+    const { url, auth, verifyTls } = await request.json();
     if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
 
-    // Prepare headers
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    // Add authentication if provided
-    if (auth && auth.username && auth.password) {
-      const credentials = btoa(`${auth.username}:${auth.password}`);
-      headers.Authorization = `Basic ${credentials}`;
-    }
-
-    // Make request to get cluster health with SSL bypass
-    const response = await sslBypassFetch(`${url}/_cluster/health`, {
-      method: 'GET',
-      headers,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to connect: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`);
-    }
-
-    const health = await response.json();
+    // sslBypassFetch (inside the client) SSRF-guards the destination
+    const client = new ElasticsearchClient({
+      url: String(url).replace(/\/+$/, ''),
+      verifyTls: verifyTls === true,
+      ...(auth?.username && auth?.password ? { auth: { username: auth.username, password: auth.password } } : {}),
+    }, false);
+    const health = await client.getClusterHealth();
     return NextResponse.json(health);
 
   } catch (error: any) {
-    console.error('Cluster health error:', error);
     return NextResponse.json(
       { error: 'Failed to get cluster health', message: error.message },
       { status: 400 }
@@ -67,6 +53,9 @@ export async function POST(request: NextRequest) {
 
 // Reports export functionality
 export async function PUT(request: NextRequest) {
+  if (!getUserFromRequest(request)) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
   try {
     const body = await request.json();
     const { format, data, connection } = body;
@@ -118,14 +107,14 @@ export async function PUT(request: NextRequest) {
       // Cluster summary
       csvContent += 'CLUSTER SUMMARY\n';
       csvContent += 'Property,Value\n';
-      csvContent += `Cluster Name,${data.cluster?.cluster_name || 'Unknown'}\n`;
-      csvContent += `Status,${data.cluster?.status || 'Unknown'}\n`;
-      csvContent += `Total Nodes,${data.cluster?.number_of_nodes || 0}\n`;
-      csvContent += `Data Nodes,${data.cluster?.number_of_data_nodes || 0}\n`;
-      csvContent += `Active Shards,${data.cluster?.active_shards || 0}\n`;
-      csvContent += `Primary Shards,${data.cluster?.active_primary_shards || 0}\n`;
-      csvContent += `Unassigned Shards,${data.cluster?.unassigned_shards || 0}\n`;
-      csvContent += `Active Shards Percent,${data.cluster?.active_shards_percent_as_number || 0}%\n`;
+      csvContent += csvRow(['Cluster Name', data.cluster?.cluster_name || 'Unknown']) + '\n';
+      csvContent += csvRow(['Status', data.cluster?.status || 'Unknown']) + '\n';
+      csvContent += csvRow(['Total Nodes', data.cluster?.number_of_nodes || 0]) + '\n';
+      csvContent += csvRow(['Data Nodes', data.cluster?.number_of_data_nodes || 0]) + '\n';
+      csvContent += csvRow(['Active Shards', data.cluster?.active_shards || 0]) + '\n';
+      csvContent += csvRow(['Primary Shards', data.cluster?.active_primary_shards || 0]) + '\n';
+      csvContent += csvRow(['Unassigned Shards', data.cluster?.unassigned_shards || 0]) + '\n';
+      csvContent += csvRow(['Active Shards Percent', `${data.cluster?.active_shards_percent_as_number || 0}%`]) + '\n';
       csvContent += '\n';
 
       // Nodes information
@@ -133,7 +122,7 @@ export async function PUT(request: NextRequest) {
       csvContent += 'Name,Host,IP,Version,Roles\n';
       if (data.nodes && Array.isArray(data.nodes)) {
         data.nodes.forEach((node: any) => {
-          csvContent += `"${node.name || ''}","${node.host || ''}","${node.ip || ''}","${node.version || ''}","${(node.roles || []).join(';')}"\n`;
+          csvContent += [node.name, node.host, node.ip, node.version, (node.roles || []).join(';')].map(csvCell).join(',') + '\n';
         });
       }
       csvContent += '\n';
@@ -143,7 +132,8 @@ export async function PUT(request: NextRequest) {
       csvContent += 'Index,Health,Status,Primary Shards,Replica Shards,Documents Count,Deleted Documents,Store Size,Primary Store Size\n';
       if (data.indices && Array.isArray(data.indices)) {
         data.indices.forEach((index: any) => {
-          csvContent += `"${index.index || ''}","${index.health || ''}","${index.status || ''}","${index.pri || ''}","${index.rep || ''}","${index['docs.count'] || ''}","${index['docs.deleted'] || ''}","${index['store.size'] || ''}","${index['pri.store.size'] || ''}"\n`;
+          csvContent += [index.index, index.health, index.status, index.pri, index.rep, index['docs.count'],
+            index['docs.deleted'], index['store.size'], index['pri.store.size']].map(csvCell).join(',') + '\n';
         });
       }
 

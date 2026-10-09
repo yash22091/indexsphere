@@ -18,6 +18,15 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   output: 'standalone',
 
+  // lib/elasticsearch.ts is shared with the browser (proxy mode); its server-only
+  // transport (ssl-bypass → url-guard) uses Node built-ins that never run client-side.
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = { ...config.resolve.fallback, dns: false, net: false };
+    }
+    return config;
+  },
+
   async headers() {
     return [
       {

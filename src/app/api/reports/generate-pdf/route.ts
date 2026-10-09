@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { namedSemaphore } from '@/lib/concurrency';
 import { requireAdmin } from '@/lib/auth';
 import debugLog from '@/lib/debug';
 
@@ -28,20 +29,31 @@ export async function POST(request: NextRequest) {
       cluster: reportData.metadata?.cluster_name
     });
 
-    // Create HTML content for the PDF
-    const htmlContent = generateReportHTML(reportData);
+    // Create HTML content for the PDF — every string from the request is HTML-escaped
+    const htmlContent = generateReportHTML(escapeDeep(reportData));
     
     // For now, we'll use puppeteer for PDF generation
     // In production, you might want to use a dedicated PDF service
-    const puppeteer = require('puppeteer');
+    // puppeteer is ESM-only: load it with a dynamic import
+    const puppeteer = (await import('puppeteer')).default;
     
-    // Wrap the entire PDF generation in a timeout
+    // Each PDF launches headless Chrome (~200 MB): cap concurrency so bursts queue
+    // instead of exhausting memory. The slot is held until Chrome has exited.
+    const sem = namedSemaphore('pdf', Number(process.env.PDF_MAX_CONCURRENCY ?? 2) || 2);
+    let job: Promise<unknown>;
+    try {
+      const release = await sem.acquire(30_000);
+      job = generatePDFWithPuppeteer(puppeteer, htmlContent).finally(release);
+    } catch {
+      return NextResponse.json({ error: 'PDF generator is busy, please retry in a moment' }, { status: 429 });
+    }
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const pdfBuffer = await Promise.race([
-      generatePDFWithPuppeteer(puppeteer, htmlContent),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('PDF generation timeout after 2 minutes')), 120000)
-      )
-    ]);
+      job,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('PDF generation timeout after 2 minutes')), 120000);
+      }),
+    ]).finally(() => clearTimeout(timeoutId));
     
     debugLog.api.response(200, 'PDF generated successfully');
 
@@ -50,7 +62,7 @@ export async function POST(request: NextRequest) {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="cluster-report-${reportData.metadata?.cluster_name || 'unknown'}-${new Date().toISOString().split('T')[0]}.pdf"`
+        'Content-Disposition': `attachment; filename="cluster-report-${String(reportData.metadata?.cluster_name || 'unknown').replace(/[^\w.-]/g, '_')}-${new Date().toISOString().split('T')[0]}.pdf"`
       }
     });
 
@@ -81,6 +93,15 @@ async function generatePDFWithPuppeteer(puppeteer: any, htmlContent: string) {
   
   try {
     const page = await browser.newPage();
+
+    // The report is static HTML: no scripts, and no network access at all
+    // (prevents SSRF / data exfiltration from injected markup).
+    await page.setJavaScriptEnabled(false);
+    await page.setRequestInterception(true);
+    page.on('request', (req: any) => {
+      if (req.url().startsWith('data:')) req.continue();
+      else req.abort();
+    });
     
     // Set longer timeouts for the page
     page.setDefaultTimeout(60000); // 1 minute
@@ -109,6 +130,25 @@ async function generatePDFWithPuppeteer(puppeteer: any, htmlContent: string) {
   } finally {
     await browser.close();
   }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Recursively HTML-escape every string (keys included) in client-supplied report data. */
+function escapeDeep(value: any): any {
+  if (typeof value === 'string') return escapeHtml(value);
+  if (Array.isArray(value)) return value.map(escapeDeep);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [escapeHtml(k), escapeDeep(v)]));
+  }
+  return value;
 }
 
 function generateReportHTML(data: any) {

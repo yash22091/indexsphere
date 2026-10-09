@@ -1,72 +1,35 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/organisms/header";
 import { Sidebar } from "@/components/organisms/sidebar";
-import { NAVIGATION } from "@/constants/brand";
+import { cn } from "@/lib/utils";
 
-interface MainLayoutProps {
-  children: React.ReactNode;
-}
+const DESKTOP = 1024;
 
-export function MainLayout({ children }: MainLayoutProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(true); // Default to open on desktop
-  const pathname = usePathname();
+export function MainLayout({ children }: { children: React.ReactNode }) {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  // Get page title based on current route
-  const getPageTitle = (pathname: string): string | undefined => {
-    // Find the current page in navigation
-    const allNavItems = [
-      ...NAVIGATION.main,
-      ...NAVIGATION.secondary,
-      ...NAVIGATION.advanced
-    ];
-    
-    const currentPage = allNavItems.find(item => item.href === pathname);
-    return currentPage?.name;
-  };
-
-  const pageTitle = getPageTitle(pathname);
-
-  // Auto-responsive behavior for sidebar
+  // Open on desktop, closed (overlay) on smaller screens
   useEffect(() => {
-    const handleResize = () => {
-      // On mobile (< lg), close sidebar by default
-      if (window.innerWidth < 1024) {
-        setSidebarOpen(false);
-      } else {
-        // On desktop, keep sidebar open
-        setSidebarOpen(true);
-      }
-    };
-
-    // Set initial state
-    handleResize();
-    
-    // Listen for window resize
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    const apply = () => setSidebarOpen(window.innerWidth >= DESKTOP);
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
   }, []);
 
+  const closeOnMobile = () => {
+    if (window.innerWidth < DESKTOP) setSidebarOpen(false);
+  };
+
   return (
-    <div className="min-h-screen bg-background">
-      <div className="flex">
-        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-        <div className={`flex-1 flex flex-col transition-all duration-300 ${
-          sidebarOpen ? 'lg:ml-[257px]' : 'lg:ml-0'
-        }`}>
-          <Header 
-            onMenuClick={() => setSidebarOpen(!sidebarOpen)} 
-            sidebarOpen={sidebarOpen}
-            title={pageTitle}
-          />
-          <main className="flex-1 min-w-0">
-            <div className="p-2 sm:py-4 sm:pr-4 sm:pl-4">
-              {children}
-            </div>
-          </main>
-        </div>
+    <div className="min-h-screen bg-muted/30">
+      <Sidebar open={sidebarOpen} onClose={closeOnMobile} />
+      <div className={cn("flex min-h-screen flex-col transition-[margin] duration-200", sidebarOpen ? "lg:ml-64" : "lg:ml-0")}>
+        <Header onMenuClick={() => setSidebarOpen(o => !o)} />
+        <main className="flex-1 min-w-0">
+          <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 md:p-6">{children}</div>
+        </main>
       </div>
     </div>
   );

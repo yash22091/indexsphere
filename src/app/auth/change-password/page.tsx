@@ -2,14 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { BRAND } from "@/constants/brand";
-import { ThemeToggle } from "@/components/atoms/theme-toggle";
-import { KeyRound, AlertCircle, CheckCircle2, Eye, EyeOff } from "lucide-react";
+import { BrandMark, BrandName } from "@/components/app";
+import { AlertCircle, CheckCircle2, Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function ChangePasswordPage() {
   const router = useRouter();
@@ -70,8 +68,8 @@ export default function ChangePasswordPage() {
         return;
       }
 
-      setSuccess("Password changed successfully. Redirecting…");
-      setTimeout(() => router.replace('/connect'), 1500);
+      setSuccess("Password updated.");
+      router.replace('/connections');
     } catch {
       setError("Unexpected error. Please try again.");
     } finally {
@@ -88,149 +86,98 @@ export default function ChangePasswordPage() {
     if (/[A-Z]/.test(p)) score++;
     if (/[0-9]/.test(p)) score++;
     if (/[^A-Za-z0-9]/.test(p)) score++;
-    if (score <= 2) return { label: "Weak", color: "bg-red-500" };
-    if (score <= 3) return { label: "Fair", color: "bg-yellow-500" };
-    return { label: "Strong", color: "bg-green-500" };
+    if (score <= 2) return { label: "Weak", width: "33%", color: "bg-destructive" };
+    if (score <= 3) return { label: "Fair", width: "66%", color: "bg-warning" };
+    return { label: "Strong", width: "100%", color: "bg-success" };
   })();
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950 flex items-center justify-center p-4">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
+  const field = (
+    id: "currentPassword" | "newPassword" | "confirmPassword",
+    label: string,
+    show: boolean,
+    toggle: () => void,
+    autoComplete: string,
+  ) => (
+    <div className="grid gap-2">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="relative">
+        <Input
+          id={id}
+          type={show ? "text" : "password"}
+          value={form[id]}
+          onChange={e => setForm(f => ({ ...f, [id]: e.target.value }))}
+          className="pr-10"
+          required
+          autoComplete={autoComplete}
+          disabled={loading || !!success}
+        />
+        <button
+          type="button"
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          onClick={toggle}
+          tabIndex={-1}
+          aria-label={show ? "Hide password" : "Show password"}
+        >
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
       </div>
+    </div>
+  );
 
-      <div className="w-full max-w-sm space-y-3">
-        {/* Header */}
-        <Card className="text-center border-slate-200 dark:border-slate-800">
-          <CardHeader className="pb-2">
-            <div className="mx-auto w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-full flex items-center justify-center mb-2">
-              <KeyRound className="h-5 w-5 text-white" />
-            </div>
-            <CardTitle className="text-base">{BRAND.name}</CardTitle>
-            <CardDescription className="text-sm">
-              You must set a new password before continuing.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+  return (
+    <div className="flex min-h-svh flex-col gap-4 p-6 md:p-10">
+      <div className="flex items-center gap-2.5">
+        <BrandMark className="h-7 w-7" />
+        <BrandName />
+      </div>
+      <div className="flex flex-1 items-center justify-center">
+        <form onSubmit={handleSubmit} className="grid w-full max-w-sm gap-5">
+          <div className="grid gap-1.5">
+            <h1 className="text-2xl font-semibold tracking-tight">Set a new password</h1>
+            <p className="text-sm text-muted-foreground">
+              For security, the initial password must be changed before you continue.
+            </p>
+          </div>
 
-        {/* Form */}
-        <Card className="border-slate-200 dark:border-slate-800">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">Change Password</CardTitle>
-            <CardDescription className="text-xs">
-              The default password <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">admin</code> must be changed before you can use the application.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Current password */}
-              <div className="space-y-1">
-                <Label htmlFor="currentPassword" className="text-xs">Current Password</Label>
-                <div className="relative">
-                  <Input
-                    id="currentPassword"
-                    type={showCurrent ? "text" : "password"}
-                    value={form.currentPassword}
-                    onChange={e => setForm(f => ({ ...f, currentPassword: e.target.value }))}
-                    placeholder="Enter current password"
-                    className="text-sm pr-9"
-                    required
-                    autoComplete="current-password"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    onClick={() => setShowCurrent(v => !v)}
-                    tabIndex={-1}
-                  >
-                    {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          {success && (
+            <Alert>
+              <CheckCircle2 className="h-4 w-4 text-success" />
+              <AlertDescription>{success}</AlertDescription>
+            </Alert>
+          )}
+
+          {field("currentPassword", "Current password", showCurrent, () => setShowCurrent(v => !v), "current-password")}
+          <div className="grid gap-2">
+            {field("newPassword", "New password", showNew, () => setShowNew(v => !v), "new-password")}
+            {strength ? (
+              <div className="flex items-center gap-2">
+                <div className="h-1 flex-1 rounded-full bg-muted">
+                  <div className={`h-1 rounded-full transition-all ${strength.color}`} style={{ width: strength.width }} />
                 </div>
+                <span className="w-12 text-right text-xs text-muted-foreground">{strength.label}</span>
               </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">At least 8 characters. Longer passphrases are stronger.</p>
+            )}
+          </div>
+          <div className="grid gap-2">
+            {field("confirmPassword", "Confirm new password", showConfirm, () => setShowConfirm(v => !v), "new-password")}
+            {form.confirmPassword && form.newPassword !== form.confirmPassword && (
+              <p className="text-xs text-destructive">Passwords don&apos;t match.</p>
+            )}
+          </div>
 
-              {/* New password */}
-              <div className="space-y-1">
-                <Label htmlFor="newPassword" className="text-xs">New Password</Label>
-                <div className="relative">
-                  <Input
-                    id="newPassword"
-                    type={showNew ? "text" : "password"}
-                    value={form.newPassword}
-                    onChange={e => setForm(f => ({ ...f, newPassword: e.target.value }))}
-                    placeholder="At least 8 characters"
-                    className="text-sm pr-9"
-                    required
-                    autoComplete="new-password"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    onClick={() => setShowNew(v => !v)}
-                    tabIndex={-1}
-                  >
-                    {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {strength && (
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="flex-1 h-1 rounded bg-slate-200 dark:bg-slate-700">
-                      <div
-                        className={`h-1 rounded transition-all ${strength.color}`}
-                        style={{ width: strength.label === "Weak" ? "33%" : strength.label === "Fair" ? "66%" : "100%" }}
-                      />
-                    </div>
-                    <span className="text-xs text-slate-500">{strength.label}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Confirm password */}
-              <div className="space-y-1">
-                <Label htmlFor="confirmPassword" className="text-xs">Confirm New Password</Label>
-                <div className="relative">
-                  <Input
-                    id="confirmPassword"
-                    type={showConfirm ? "text" : "password"}
-                    value={form.confirmPassword}
-                    onChange={e => setForm(f => ({ ...f, confirmPassword: e.target.value }))}
-                    placeholder="Repeat new password"
-                    className="text-sm pr-9"
-                    required
-                    autoComplete="new-password"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    onClick={() => setShowConfirm(v => !v)}
-                    tabIndex={-1}
-                  >
-                    {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {form.confirmPassword && form.newPassword !== form.confirmPassword && (
-                  <p className="text-xs text-red-500 mt-1">Passwords don&apos;t match.</p>
-                )}
-              </div>
-
-              {error && (
-                <Alert variant="destructive" className="py-2">
-                  <AlertCircle className="h-3 w-3" />
-                  <AlertDescription className="text-xs ml-1">{error}</AlertDescription>
-                </Alert>
-              )}
-              {success && (
-                <Alert className="py-2 border-green-200 bg-green-50 dark:bg-green-950">
-                  <CheckCircle2 className="h-3 w-3 text-green-600" />
-                  <AlertDescription className="text-xs ml-1 text-green-700 dark:text-green-300">{success}</AlertDescription>
-                </Alert>
-              )}
-
-              <Button type="submit" className="w-full" disabled={loading || !!success}>
-                {loading ? "Changing…" : "Set New Password"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+          <Button type="submit" className="w-full" disabled={loading || !!success}>
+            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Update password
+          </Button>
+        </form>
       </div>
     </div>
   );

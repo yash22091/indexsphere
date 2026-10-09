@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest, validateRequestHmac } from '@/lib/auth';
 import { getDatabase } from '@/lib/database-sqlite';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
 const LOCK_KEY      = 'security_lock_enabled';
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
   // ── Toggle security lock (requires admin + own password) ──────────────────
   if (action === 'setLock') {
-    const { enabled, password } = body as unknown as { enabled: string; password: string };
+    const { password } = body as unknown as { enabled: string; password: string };
 
     // Verify the caller's own password
     const dbUser = await db.getUserByUsername(user.username ?? '');

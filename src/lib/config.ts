@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomBytes } from 'crypto';
 
 interface IndexsphereConfig {
   // Server configuration
@@ -137,7 +138,7 @@ const DEFAULT_CONFIG: IndexsphereConfig = {
           );
         }
         // Development only: generate a session-scoped random secret and warn.
-        const devSecret = require('crypto').randomBytes(32).toString('hex');
+        const devSecret = randomBytes(32).toString('hex');
         console.warn(
           '\n⚠️  JWT_SECRET is not set. Using a randomly generated secret for this ' +
           'session. All existing sessions will be invalidated on restart. ' +

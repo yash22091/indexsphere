@@ -1,602 +1,392 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { 
-  Plus, 
-  Trash2, 
-  Users, 
-  Shield, 
-  AlertCircle, 
-  CheckCircle,
-  Key,
-  Save,
-  Loader2,
-  Lock,
-  RefreshCw
-} from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertCircle, CheckCircle2, KeyRound, Loader2, Lock, Plus, RefreshCw, Trash2, Users } from "lucide-react";
+import { EmptyState, PageHeader } from "@/components/app";
+
+type Role = "admin" | "user" | "readonly";
 
 interface User {
   id: string;
   username: string;
   email: string;
-  role: 'admin' | 'user' | 'readonly';
+  role: Role;
   created_at: string;
   updated_at: string;
   last_login?: string;
   is_active: boolean;
 }
 
+const ROLES: { id: Role; label: string; description: string }[] = [
+  { id: "readonly", label: "Read-only", description: "View clusters and run read-only queries." },
+  { id: "user", label: "Operator", description: "Read access plus index and data operations." },
+  { id: "admin", label: "Administrator", description: "Everything, including users, connections and security settings." },
+];
+const roleLabel = (r: Role) => ROLES.find(x => x.id === r)?.label ?? r;
+const MIN_PASSWORD = 8; // enforced by the API as well
+
+const emptyNewUser = { username: "", email: "", password: "", confirmPassword: "", role: "user" as Role };
+
 export default function UserManagementPage() {
+  // All hooks run unconditionally, before any early return
   const { user, isAuthenticated, isLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Show loading while auth is being checked
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
-    );
-  }
-
-  // If not authenticated, redirect will be handled by middleware
-  if (!isAuthenticated) {
-    return null;
-  }
-
-  // Check if user has admin access - use role instead of permissions
-  const hasAdminAccess = user?.permissions?.includes('admin') || false;
-
-  // If user doesn't have admin access, show access denied
-  if (!hasAdminAccess) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-950 dark:to-blue-950">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 dark:bg-red-900">
-              <Lock className="h-8 w-8 text-red-600 dark:text-red-400" />
-            </div>
-            <CardTitle className="text-2xl font-bold text-red-600 dark:text-red-400">
-              Access Denied
-            </CardTitle>
-            <CardDescription className="text-lg">
-              You don't have permission to access User Management
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-center space-y-4">
-            <p className="text-muted-foreground">
-              This page requires administrator privileges. Contact your system administrator if you believe you should have access.
-            </p>
-            <div className="flex items-center justify-center space-x-2 text-sm text-muted-foreground">
-              <Shield className="h-4 w-4" />
-              <span>Current Role: {user?.permissions?.includes('admin') ? 'Admin' : 
-                                  user?.permissions?.includes('user') ? 'User' : 'Read Only'}</span>
-            </div>
-            <Button 
-              onClick={() => window.location.href = '/overview'} 
-              className="w-full"
-              variant="outline"
-            >
-              Go to Overview
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  const [newUser, setNewUser] = useState({
-    username: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-    role: "user" as 'admin' | 'user' | 'readonly'
-  });
-
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [newUser, setNewUser] = useState(emptyNewUser);
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [changePasswordUser, setChangePasswordUser] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
-  const [success, setSuccess] = useState("");
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
-  // Load users on component mount, but only if authenticated
-  useEffect(() => {
-    console.log('useEffect triggered - isAuthenticated:', isAuthenticated, 'isLoading:', isLoading);
-    if (isAuthenticated && !isLoading) {
-      console.log('Calling loadUsers');
-      loadUsers();
-    } else {
-      console.log('Skipping loadUsers - not ready');
-    }
-  }, [isAuthenticated, isLoading]);
+  const isAdmin = !!user?.permissions?.includes("admin");
 
-  // Auto-clear success messages after 5 seconds
-  useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => {
-        setSuccess("");
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [success]);
-
-  // Auto-clear error messages after 10 seconds
-  useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => {
-        setError("");
-      }, 10000);
-      return () => clearTimeout(timer);
-    }
-  }, [error]);
-
-  const loadUsers = async () => {
-    console.log('🔄 loadUsers function called');
-    console.log('🔐 Current auth state - isAuthenticated:', isAuthenticated, 'isLoading:', isLoading);
-    
-    // Don't attempt to load users if not authenticated
-    if (!isAuthenticated) {
-      console.log('⏸️ Skipping user load - not authenticated');
-      setLoading(false);
-      return;
-    }
-
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
-      setLoading(true);
-      // Clear any existing messages
-      setError("");
-      setSuccess("");
-      
-      // Add cache-busting parameter to prevent stale data
-      const timestamp = new Date().getTime();
-      console.log('🌐 Making API call to /api/users with timestamp:', timestamp);
-      
-      const response = await fetch(`/api/users?_t=${timestamp}`, {
-        cache: 'no-store',
-        credentials: 'include',
-        headers: {
-          'Cache-Control': 'no-cache'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to load users');
-      }
-      
+      const response = await fetch("/api/users", { cache: "no-store", credentials: "include" });
       const data = await response.json();
-      setUsers(data.users);
+      if (!response.ok) throw new Error(data.error || "Failed to load users");
+      setUsers(data.users ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load users');
+      setError(err instanceof Error ? err.message : "Failed to load users");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const availableRoles = [
-    { id: "readonly", label: "Read Only", description: "View cluster data and indices" },
-    { id: "user", label: "User", description: "Read access plus basic operations" },
-    { id: "admin", label: "Administrator", description: "Full cluster administration" }
-  ];
+  useEffect(() => {
+    if (isAuthenticated && !isLoading && isAdmin) loadUsers();
+  }, [isAuthenticated, isLoading, isAdmin, loadUsers]);
+
+  useEffect(() => {
+    if (!success) return;
+    const t = setTimeout(() => setSuccess(""), 5000);
+    return () => clearTimeout(t);
+  }, [success]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-64" />
+      </div>
+    );
+  }
+  if (!isAuthenticated) return null;
+
+  if (!isAdmin) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Users" />
+        <EmptyState
+          icon={Lock}
+          title="Administrator access required"
+          description="Only administrators can manage users. Ask an administrator if you need access."
+          action={<Button variant="outline" onClick={() => { window.location.href = "/overview"; }}>Go to overview</Button>}
+        />
+      </div>
+    );
+  }
 
   const handleAddUser = async () => {
-    setError("");
-    setSuccess("");
-
-    // Validation
+    setFormError("");
     if (!newUser.username || !newUser.email || !newUser.password) {
-      setError("Username, email, and password are required");
+      setFormError("Username, email and password are required.");
       return;
     }
-
+    if (newUser.password.length < MIN_PASSWORD) {
+      setFormError(`Password must be at least ${MIN_PASSWORD} characters.`);
+      return;
+    }
     if (newUser.password !== newUser.confirmPassword) {
-      setError("Passwords do not match");
+      setFormError("Passwords don't match.");
       return;
     }
-
-    if (newUser.password.length < 6) {
-      setError("Password must be at least 6 characters long");
-      return;
-    }
-
+    setBusy(true);
     try {
-      const response = await fetch('/api/users', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username: newUser.username,
-          email: newUser.email,
-          password: newUser.password,
-          role: newUser.role
-        }),
+      const response = await fetch("/api/users", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: newUser.username, email: newUser.email, password: newUser.password, role: newUser.role }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create user');
-      }
-
-      setNewUser({ username: "", email: "", password: "", confirmPassword: "", role: "user" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to create user");
       setShowAddDialog(false);
-      setSuccess(`User "${newUser.username}" created successfully`);
+      setSuccess(`User "${newUser.username}" created.`);
+      setNewUser(emptyNewUser);
       loadUsers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create user");
+      setFormError(err instanceof Error ? err.message : "Failed to create user");
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleDeleteUser = async (userId: string) => {
-    const user = users.find(u => u.id === userId);
-    if (user && user.username === "admin") {
-      setError("Cannot delete the admin user");
-      return;
-    }
-
+  const handleDeleteUser = async (target: User) => {
+    if (!confirm(`Delete user "${target.username}"? Their sessions end immediately.`)) return;
+    setPendingId(target.id);
+    setError("");
     try {
-      const response = await fetch(`/api/users/${userId}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to delete user');
-      }
-
-      setSuccess("User deleted successfully");
-      setError("");
+      const response = await fetch(`/api/users/${target.id}`, { method: "DELETE", credentials: "include" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to delete user");
+      setSuccess(`User "${target.username}" deleted.`);
       loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete user");
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const handleRoleChange = async (target: User, role: Role) => {
+    if (role === target.role) return;
+    setPendingId(target.id);
+    setError("");
+    try {
+      const response = await fetch(`/api/users/${target.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to change role");
+      setSuccess(`${target.username} is now ${roleLabel(role)}. The change applies to their open sessions immediately.`);
+      loadUsers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to change role");
+    } finally {
+      setPendingId(null);
     }
   };
 
   const handleChangePassword = async () => {
     if (!changePasswordUser) return;
-
+    setFormError("");
+    if (newPassword.length < MIN_PASSWORD) {
+      setFormError(`Password must be at least ${MIN_PASSWORD} characters.`);
+      return;
+    }
     if (newPassword !== confirmNewPassword) {
-      setError("Passwords do not match");
+      setFormError("Passwords don't match.");
       return;
     }
-
-    if (newPassword.length < 6) {
-      setError("Password must be at least 6 characters");
-      return;
-    }
-
+    setBusy(true);
     try {
       const response = await fetch(`/api/users/${changePasswordUser.id}`, {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          newPassword: newPassword
-        }),
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPassword }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to change password');
-      }
-
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to change password");
+      setSuccess(`Password updated for ${changePasswordUser.username}.`);
       setChangePasswordUser(null);
       setNewPassword("");
       setConfirmNewPassword("");
-      setShowPasswordDialog(false);
-      setSuccess("Password changed successfully");
-      setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change password");
+      setFormError(err instanceof Error ? err.message : "Failed to change password");
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Loading State */}
-      {loading && (
-        <div className="flex items-center justify-center p-8">
-          <Loader2 className="h-8 w-8 animate-spin mr-2" />
-          <span>Loading users...</span>
-        </div>
-      )}
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">User Management</h1>
-          <p className="text-muted-foreground">
-            Manage users and permissions for production authentication
-          </p>
-        </div>
-        <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Add User
+      <PageHeader
+        title="Users"
+        description="IndexSphere accounts and their roles. Role changes and deletions take effect on open sessions immediately."
+        actions={
+          <>
+            <Button variant="outline" onClick={loadUsers} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? "animate-spin" : ""}`} />Refresh
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add New User</DialogTitle>
-              <DialogDescription>
-                Create a new user account for cluster access
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
-                <Input
-                  id="username"
-                  placeholder="Enter username"
-                  value={newUser.username}
-                  onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Enter password (min 8 characters)"
-                  value={newUser.password}
-                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirmPassword">Confirm Password</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  placeholder="Confirm password"
-                  value={newUser.confirmPassword}
-                  onChange={(e) => setNewUser({ ...newUser, confirmPassword: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={newUser.email}
-                  onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                  placeholder="user@example.com"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Role</Label>
-                <div className="space-y-2">
-                  {availableRoles.map((role) => (
-                    <div key={role.id} className="flex items-center space-x-2">
-                      <input
-                        type="radio"
-                        id={`role-${role.id}`}
-                        name="role"
-                        checked={newUser.role === role.id}
-                        onChange={() => setNewUser({ ...newUser, role: role.id as 'admin' | 'user' | 'readonly' })}
-                        className="rounded border-gray-300"
-                      />
-                      <label htmlFor={`role-${role.id}`} className="text-sm">
-                        <span className="font-medium">{role.label}</span>
-                        <span className="text-muted-foreground ml-2">{role.description}</span>
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
-              <Button onClick={handleAddUser}>Create User</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+            <Button onClick={() => { setNewUser(emptyNewUser); setFormError(""); setShowAddDialog(true); }}>
+              <Plus className="h-4 w-4 mr-1.5" />Add user
+            </Button>
+          </>
+        }
+      />
 
-      {/* Messages */}
       {error && (
-        <Alert className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20">
-          <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
-          <AlertDescription className="text-red-700 dark:text-red-300">
-            {error}
-          </AlertDescription>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-
       {success && (
-        <Alert className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/20">
-          <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
-          <AlertDescription className="text-green-700 dark:text-green-300">
-            {success}
-          </AlertDescription>
+        <Alert>
+          <CheckCircle2 className="h-4 w-4 text-success" />
+          <AlertDescription>{success}</AlertDescription>
         </Alert>
       )}
 
-      {/* Users Table */}
       <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center space-x-2">
-                <Users className="h-5 w-5" />
-                <span>System Users</span>
-              </CardTitle>
-              <CardDescription>
-                Manage user accounts and their permissions
-              </CardDescription>
+        <CardContent className="pt-6">
+          {loading && users.length === 0 ? (
+            <div className="space-y-2">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10" />)}</div>
+          ) : users.length === 0 ? (
+            <EmptyState icon={Users} title="No users" description="Add the first account." />
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Last sign-in</TableHead>
+                    <TableHead className="text-right"><span className="sr-only">Actions</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users.map(u => {
+                    const isSelf = u.id === user?.id || u.username === user?.username;
+                    return (
+                      <TableRow key={u.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{u.username}</span>
+                            {isSelf && <Badge variant="outline">You</Badge>}
+                            {!u.is_active && <Badge variant="outline" className="text-muted-foreground">Disabled</Badge>}
+                          </div>
+                          <div className="text-xs text-muted-foreground">{u.email}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Select value={u.role} onValueChange={v => handleRoleChange(u, v as Role)} disabled={isSelf || pendingId === u.id}>
+                            <SelectTrigger className="h-8 w-40" aria-label={`Role for ${u.username}`}><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {ROLES.map(r => <SelectItem key={r.id} value={r.id}>{r.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{new Date(u.created_at).toLocaleDateString()}</TableCell>
+                        <TableCell className="text-muted-foreground">{u.last_login ? new Date(u.last_login).toLocaleString() : "Never"}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button variant="outline" size="sm" className="h-8"
+                              onClick={() => { setChangePasswordUser(u); setNewPassword(""); setConfirmNewPassword(""); setFormError(""); }}>
+                              <KeyRound className="h-3.5 w-3.5 mr-1.5" />Reset password
+                            </Button>
+                            {!isSelf && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => handleDeleteUser(u)} disabled={pendingId === u.id} aria-label={`Delete ${u.username}`}>
+                                {pendingId === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadUsers}
-                disabled={loading}
-                title="Refresh user list"
-              >
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => window.location.reload()}
-                title="Hard refresh page"
-              >
-                Hard Refresh
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Username</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Last Login</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell className="font-medium">
-                    <div className="flex items-center space-x-2">
-                      <Key className="h-4 w-4 text-muted-foreground" />
-                      <span>{user.username}</span>
-                      {user.username === "admin" && (
-                        <Badge variant="secondary">Admin</Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      <Badge 
-                        key={user.role} 
-                        variant={user.role === 'admin' ? 'default' : 'outline'} 
-                        className="text-xs"
-                      >
-                        {user.role}
-                      </Badge>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {new Date(user.created_at).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {user.last_login ? new Date(user.last_login).toLocaleDateString() : "Never"}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex space-x-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setChangePasswordUser(user);
-                          setShowPasswordDialog(true);
-                        }}
-                        title="Change password"
-                      >
-                        <Key className="h-4 w-4" />
-                      </Button>
-                      {user.username !== "admin" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleDeleteUser(user.id)}
-                          title="Delete user"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          )}
         </CardContent>
       </Card>
 
-      {/* Production Note */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Shield className="h-5 w-5" />
-            <span>Production Security Notes</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              <strong>Production Deployment:</strong> This user management system is for production use. 
-              Passwords are hashed using bcrypt and stored securely. Users can only authenticate via Basic Authentication.
-            </AlertDescription>
-          </Alert>
-          <div className="text-sm text-muted-foreground space-y-2">
-            <p>• Passwords are automatically hashed using bcrypt with salt rounds</p>
-            <p>• User sessions are managed securely with JWT tokens</p>
-            <p>• Permission-based access control for different cluster operations</p>
-            <p>• Admin user cannot be deleted to maintain system access</p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Change Password Dialog */}
-      <Dialog open={showPasswordDialog} onOpenChange={setShowPasswordDialog}>
-        <DialogContent>
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Change Password</DialogTitle>
-            <DialogDescription>
-              Change password for user: {changePasswordUser?.username}
-            </DialogDescription>
+            <DialogTitle>Add user</DialogTitle>
+            <DialogDescription>The user signs in with this username and password.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="new-password">New Password</Label>
-              <Input
-                id="new-password"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter new password"
-              />
+          <div className="grid gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="new-username">Username</Label>
+                <Input id="new-username" autoComplete="off" value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="new-email">Email</Label>
+                <Input id="new-email" type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="name@example.com" />
+              </div>
             </div>
-            <div>
-              <Label htmlFor="confirm-new-password">Confirm New Password</Label>
-              <Input
-                id="confirm-new-password"
-                type="password"
-                value={confirmNewPassword}
-                onChange={(e) => setConfirmNewPassword(e.target.value)}
-                placeholder="Confirm new password"
-              />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="new-password">Password</Label>
+                <Input id="new-password" type="password" autoComplete="new-password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="new-confirm">Confirm password</Label>
+                <Input id="new-confirm" type="password" autoComplete="new-password" value={newUser.confirmPassword} onChange={e => setNewUser({ ...newUser, confirmPassword: e.target.value })} />
+              </div>
             </div>
+            <div className="grid gap-2">
+              <Label>Role</Label>
+              <div className="grid gap-2">
+                {ROLES.map(r => (
+                  <label key={r.id} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors ${newUser.role === r.id ? "border-foreground/40 bg-muted/50" : "hover:bg-muted/30"}`}>
+                    <input type="radio" name="role" className="mt-1 accent-foreground" checked={newUser.role === r.id} onChange={() => setNewUser({ ...newUser, role: r.id })} />
+                    <span>
+                      <span className="block font-medium">{r.label}</span>
+                      <span className="block text-muted-foreground">{r.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            {formError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{formError}</AlertDescription>
+              </Alert>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPasswordDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleChangePassword}>
-              <Save className="h-4 w-4 mr-2" />
-              Change Password
-            </Button>
+            <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
+            <Button onClick={handleAddUser} disabled={busy}>{busy && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}Add user</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!changePasswordUser} onOpenChange={o => { if (!o) setChangePasswordUser(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset password</DialogTitle>
+            <DialogDescription>Set a new password for {changePasswordUser?.username}.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="reset-password">New password</Label>
+              <Input id="reset-password" type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+              <p className="text-xs text-muted-foreground">At least {MIN_PASSWORD} characters.</p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="reset-confirm">Confirm new password</Label>
+              <Input id="reset-confirm" type="password" autoComplete="new-password" value={confirmNewPassword} onChange={e => setConfirmNewPassword(e.target.value)} />
+            </div>
+            {formError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{formError}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setChangePasswordUser(null)}>Cancel</Button>
+            <Button onClick={handleChangePassword} disabled={busy}>{busy && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}Update password</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

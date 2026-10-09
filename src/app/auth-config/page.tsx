@@ -5,35 +5,92 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Shield, Key, Settings, CheckCircle, Copy, RefreshCw,
-  Eye, EyeOff, Lock, LockOpen, Bug, AlertTriangle,
-} from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { AlertCircle, CheckCircle2, Eye, EyeOff, Loader2, Lock, LockOpen, Save, Unlock } from "lucide-react";
+import { PageHeader, SeverityBadge, StatCard } from "@/components/app";
 import { writeLockState } from "@/lib/security-guardian";
 
+interface Policy {
+  sessionTimeout: number;      // minutes
+  maxLoginAttempts: number;
+  lockoutDuration: number;     // minutes
+  auditLogging: boolean;
+  requireStrongPasswords: boolean;
+}
+interface LoginAttempt { ip: string; username: string; timestamp: number; success: boolean }
+interface Stats { activeAttempts: number; lockedUsers: number; totalAuditLogs: number }
+
 export default function AuthConfigPage() {
-  const [showPasswords, setShowPasswords] = useState(false);
-  const [authConfig, setAuthConfig] = useState({
-    basicAuth: {
-      enabled: true,
-      requireHttps: true,
-      sessionTimeout: 3600,
-      maxLoginAttempts: 5
-    },
-    security: {
-      enforceHttps: true,
-      sessionTimeout: 3600,
-      rememberMe: true,
-      maxConcurrentSessions: 3,
-      bruteForceProtection: true,
-      auditLogging: true
-    }
-  });
+  // ── Sign-in policy (server config via /api/auth-config) ────────────────
+  const [policy, setPolicy] = useState<Policy | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [attempts, setAttempts] = useState<LoginAttempt[]>([]);
+  const [policyLoading, setPolicyLoading] = useState(true);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyError, setPolicyError] = useState<string | null>(null);
+  const [policySaved, setPolicySaved] = useState<string | null>(null);
+  const [unlockName, setUnlockName] = useState("");
+  const [unlockMsg, setUnlockMsg] = useState<string | null>(null);
+
+  const loadPolicy = async () => {
+    setPolicyLoading(true); setPolicyError(null);
+    try {
+      const r = await fetch("/api/auth-config", { credentials: "include" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? "Failed to load configuration");
+      const sec = d.config?.security ?? {};
+      setPolicy({
+        sessionTimeout: sec.sessionTimeout ?? 480,
+        maxLoginAttempts: sec.maxLoginAttempts ?? 5,
+        lockoutDuration: sec.lockoutDuration ?? 15,
+        auditLogging: sec.auditLogging ?? true,
+        requireStrongPasswords: sec.requireStrongPasswords ?? false,
+      });
+      setStats(d.stats ?? null);
+      setAttempts(Array.isArray(d.auditLogs) ? d.auditLogs : []);
+    } catch (e) { setPolicyError(e instanceof Error ? e.message : String(e)); }
+    finally { setPolicyLoading(false); }
+  };
+
+  const savePolicy = async () => {
+    if (!policy) return;
+    setPolicySaving(true); setPolicyError(null); setPolicySaved(null);
+    try {
+      const r = await fetch("/api/auth-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ security: policy }),
+      });
+      const d = await r.json();
+      if (!r.ok || d.success === false) throw new Error(d.error ?? "Failed to save");
+      setPolicySaved("Sign-in policy saved. New sessions use the new timeout.");
+      setTimeout(() => setPolicySaved(null), 5000);
+    } catch (e) { setPolicyError(e instanceof Error ? e.message : String(e)); }
+    finally { setPolicySaving(false); }
+  };
+
+  const unlockUser = async () => {
+    if (!unlockName.trim()) return;
+    setUnlockMsg(null);
+    try {
+      const r = await fetch("/api/auth-config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action: "unlockUser", username: unlockName.trim() }),
+      });
+      const d = await r.json();
+      setUnlockMsg(d.message ?? d.error ?? "Done");
+      if (r.ok) { setUnlockName(""); loadPolicy(); }
+    } catch { setUnlockMsg("Request failed"); }
+  };
+
+  useEffect(() => { loadPolicy(); }, []);
 
   // ── Traffic Security Lock ─────────────────────────────────────────────────
   const [secLockEnabled, setSecLockEnabled] = useState(false);
@@ -127,455 +184,242 @@ export default function AuthConfigPage() {
   };
   // ─────────────────────────────────────────────────────────────────────────
 
-  const handleSave = () => { console.log("Saving auth config:", authConfig); };
-  const handleTest = (type: "basic") => { console.log(`Testing ${type} authentication...`); };
-  const copyConfig = () => { navigator.clipboard.writeText(JSON.stringify(authConfig, null, 2)); };
-
-  void showPasswords; // used by future password fields
+  const numField = (key: "sessionTimeout" | "maxLoginAttempts" | "lockoutDuration", label: string, hint: string, min: number, max: number) => (
+    <div className="grid gap-2">
+      <Label htmlFor={key}>{label}</Label>
+      <Input id={key} type="number" min={min} max={max} value={policy?.[key] ?? ""}
+        onChange={e => setPolicy(p => (p ? { ...p, [key]: Number(e.target.value) } : p))} />
+      <p className="text-xs text-muted-foreground">{hint}</p>
+    </div>
+  );
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Authentication Configuration</h1>
-          <p className="text-muted-foreground mt-2">
-            Configure authentication methods and security settings for your Indexsphere instance
-          </p>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Button variant="outline" onClick={copyConfig}>
-            <Copy className="h-4 w-4 mr-2" />
-            Export Config
+    <div className="space-y-6">
+      <PageHeader
+        title="Authentication"
+        description="Sign-in policy, account lockouts and browser inspection controls."
+        actions={
+          <Button onClick={savePolicy} disabled={!policy || policySaving}>
+            {policySaving ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Save className="h-4 w-4 mr-1.5" />}
+            Save policy
           </Button>
-          <Button onClick={handleSave}>
-            <Settings className="h-4 w-4 mr-2" />
-            Save Changes
-          </Button>
-        </div>
+        }
+      />
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard label="Locked accounts" value={stats?.lockedUsers ?? "—"} tone={stats?.lockedUsers ? "warning" : "default"} />
+        <StatCard label="Clients with recent attempts" value={stats?.activeAttempts ?? "—"} />
+        <StatCard label="Recorded sign-in events" value={stats?.totalAuditLogs ?? "—"} hint="Kept in memory, last 1,000" />
       </div>
 
-      <div className="grid gap-6">
-        <Tabs defaultValue="methods" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="methods">Auth Methods</TabsTrigger>
-            <TabsTrigger value="security">Security</TabsTrigger>
-            <TabsTrigger value="advanced">Advanced</TabsTrigger>
-          </TabsList>
+      {policyError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{policyError}</AlertDescription>
+        </Alert>
+      )}
+      {policySaved && (
+        <Alert>
+          <CheckCircle2 className="h-4 w-4 text-success" />
+          <AlertDescription>{policySaved}</AlertDescription>
+        </Alert>
+      )}
 
-          {/* Authentication Methods */}
-          <TabsContent value="methods" className="space-y-6">
-            {/* Basic Authentication */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Key className="h-5 w-5" />
-                    <CardTitle>Basic Authentication</CardTitle>
-                    <Badge variant={authConfig.basicAuth.enabled ? "default" : "secondary"}>
-                      {authConfig.basicAuth.enabled ? "Enabled" : "Disabled"}
-                    </Badge>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Sign-in policy</CardTitle>
+            <CardDescription>Applies to all IndexSphere accounts.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {policyLoading || !policy ? (
+              <div className="space-y-3">{[0, 1, 2].map(i => <Skeleton key={i} className="h-14" />)}</div>
+            ) : (
+              <div className="grid gap-4">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {numField("sessionTimeout", "Session length (min)", "1–10,080", 1, 10080)}
+                  {numField("maxLoginAttempts", "Failed attempts", "Before lockout, 1–20", 1, 20)}
+                  {numField("lockoutDuration", "Lockout (min)", "1–1,440", 1, 1440)}
+                </div>
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor="strong-pw">Require strong passwords</Label>
+                    <p className="text-xs text-muted-foreground">Enforce complexity for new passwords.</p>
                   </div>
-                  <Switch
-                    checked={authConfig.basicAuth.enabled}
-                    onCheckedChange={(checked) => 
-                      setAuthConfig(prev => ({
-                        ...prev,
-                        basicAuth: { ...prev.basicAuth, enabled: checked }
-                      }))
-                    }
-                  />
+                  <Switch id="strong-pw" checked={policy.requireStrongPasswords} onCheckedChange={v => setPolicy(p => (p ? { ...p, requireStrongPasswords: v } : p))} />
                 </div>
-                <CardDescription>
-                  HTTP Basic Authentication using username and password
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="session-timeout">Session Timeout (seconds)</Label>
-                    <Input
-                      id="session-timeout"
-                      type="number"
-                      value={authConfig.basicAuth.sessionTimeout}
-                      onChange={(e) => 
-                        setAuthConfig(prev => ({
-                          ...prev,
-                          basicAuth: { ...prev.basicAuth, sessionTimeout: parseInt(e.target.value) }
-                        }))
-                      }
-                    />
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor="audit-log">Audit logging</Label>
+                    <p className="text-xs text-muted-foreground">Record sign-in events.</p>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="max-attempts">Max Login Attempts</Label>
-                    <Input
-                      id="max-attempts"
-                      type="number"
-                      value={authConfig.basicAuth.maxLoginAttempts}
-                      onChange={(e) => 
-                        setAuthConfig(prev => ({
-                          ...prev,
-                          basicAuth: { ...prev.basicAuth, maxLoginAttempts: parseInt(e.target.value) }
-                        }))
-                      }
-                    />
-                  </div>
+                  <Switch id="audit-log" checked={policy.auditLogging} onCheckedChange={v => setPolicy(p => (p ? { ...p, auditLogging: v } : p))} />
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    id="require-https"
-                    checked={authConfig.basicAuth.requireHttps}
-                    onCheckedChange={(checked) => 
-                      setAuthConfig(prev => ({
-                        ...prev,
-                        basicAuth: { ...prev.basicAuth, requireHttps: checked }
-                      }))
-                    }
-                  />
-                  <Label htmlFor="require-https">Require HTTPS</Label>
-                </div>
-                <div className="flex space-x-2">
-                  <Button variant="outline" onClick={() => handleTest("basic")}>
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Test Configuration
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-          {/* Security Settings */}
-          <TabsContent value="security" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Shield className="h-5 w-5 mr-2" />
-                  Security Settings
-                </CardTitle>
-                <CardDescription>
-                  Configure security policies and session management
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <h3 className="font-medium">Session Management</h3>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="remember-me">Allow Remember Me</Label>
-                        <Switch
-                          id="remember-me"
-                          checked={authConfig.security.rememberMe}
-                          onCheckedChange={(checked) => 
-                            setAuthConfig(prev => ({
-                              ...prev,
-                              security: { ...prev.security, rememberMe: checked }
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="concurrent-sessions">Max Concurrent Sessions</Label>
-                        <Input
-                          id="concurrent-sessions"
-                          type="number"
-                          value={authConfig.security.maxConcurrentSessions}
-                          onChange={(e) => 
-                            setAuthConfig(prev => ({
-                              ...prev,
-                              security: { ...prev.security, maxConcurrentSessions: parseInt(e.target.value) }
-                            }))
-                          }
-                        />
-                      </div>
-                    </div>
-                  </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Unlock an account</CardTitle>
+            <CardDescription>Clears a lockout caused by repeated failed sign-ins.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            <form className="flex gap-2" onSubmit={e => { e.preventDefault(); unlockUser(); }}>
+              <Input placeholder="Username" value={unlockName} onChange={e => setUnlockName(e.target.value)} aria-label="Username to unlock" />
+              <Button type="submit" variant="outline" disabled={!unlockName.trim()}><Unlock className="h-4 w-4 mr-1.5" />Unlock</Button>
+            </form>
+            {unlockMsg && <p className="text-sm text-muted-foreground">{unlockMsg}</p>}
+          </CardContent>
+        </Card>
+      </div>
 
-                  <div className="space-y-4">
-                    <h3 className="font-medium">Security Policies</h3>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="enforce-https">Enforce HTTPS</Label>
-                        <Switch
-                          id="enforce-https"
-                          checked={authConfig.security.enforceHttps}
-                          onCheckedChange={(checked) => 
-                            setAuthConfig(prev => ({
-                              ...prev,
-                              security: { ...prev.security, enforceHttps: checked }
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="brute-force">Brute Force Protection</Label>
-                        <Switch
-                          id="brute-force"
-                          checked={authConfig.security.bruteForceProtection}
-                          onCheckedChange={(checked) => 
-                            setAuthConfig(prev => ({
-                              ...prev,
-                              security: { ...prev.security, bruteForceProtection: checked }
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="audit-logging">Audit Logging</Label>
-                        <Switch
-                          id="audit-logging"
-                          checked={authConfig.security.auditLogging}
-                          onCheckedChange={(checked) => 
-                            setAuthConfig(prev => ({
-                              ...prev,
-                              security: { ...prev.security, auditLogging: checked }
-                            }))
-                          }
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Recent sign-in attempts</CardTitle>
+          <CardDescription>The latest 50 attempts since the server started.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {attempts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No sign-in attempts recorded.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Username</TableHead>
+                    <TableHead>Client</TableHead>
+                    <TableHead>Result</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {attempts.map((a, i) => (
+                    <TableRow key={`${a.timestamp}-${i}`}>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">{new Date(a.timestamp).toLocaleString()}</TableCell>
+                      <TableCell className="font-medium">{a.username}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{a.ip}</TableCell>
+                      <TableCell><SeverityBadge level={a.success ? "ok" : "high"}>{a.success ? "Success" : "Failed"}</SeverityBadge></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-            {/* ── Traffic Security Lock ─────────────────────────────────── */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    {secLockEnabled
-                      ? <Lock className="h-5 w-5 text-destructive" />
-                      : <LockOpen className="h-5 w-5 text-muted-foreground" />}
-                    Traffic Security Lock
-                  </CardTitle>
-                  <Badge variant={secLockEnabled ? "destructive" : "outline"}>
-                    {secLockEnabled ? "LOCKED" : "UNLOCKED"}
-                  </Badge>
-                </div>
-                <CardDescription>
-                  Blocks browser DevTools (F12 / Ctrl+Shift+I) and shows a lockout overlay if DevTools is detected open.
-                  Enable debug mode with a one-time password (from container logs) to temporarily allow inspection.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-
-                {secLockError && (
-                  <Alert variant="destructive">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertDescription>{secLockError}</AlertDescription>
-                  </Alert>
-                )}
-                {secLockSuccess && (
-                  <Alert className="border-emerald-500/40 bg-emerald-500/5">
-                    <CheckCircle className="h-4 w-4 text-emerald-500" />
-                    <AlertDescription className="text-emerald-700 dark:text-emerald-400">{secLockSuccess}</AlertDescription>
-                  </Alert>
-                )}
-
-                {/* 1 — Lock toggle */}
-                <div className="rounded-lg border p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="font-medium text-sm">Browser DevTools Lock</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Disables F12 / right-click / Ctrl+Shift+I and shows a full-screen lockout if DevTools is open. Requires admin password to toggle.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={secLockEnabled}
-                      disabled={secLockLoading}
-                      onCheckedChange={() => { setSecLockError(null); setShowLockDialog(true); }}
-                    />
-                  </div>
-
-                  {showLockDialog && (
-                    <div className="rounded-md border bg-muted/40 p-3 space-y-3">
-                      <p className="text-sm font-medium">
-                        {secLockEnabled ? "Disable" : "Enable"} lock — confirm with your account password:
-                      </p>
-                      <div className="relative">
-                        <Input
-                          type={showLockPwd ? "text" : "password"}
-                          placeholder="Your account password"
-                          value={lockTogglePassword}
-                          onChange={e => setLockTogglePassword(e.target.value)}
-                          className="pr-10"
-                          onKeyDown={e => { if (e.key === "Enter") toggleLock(); }}
-                          autoFocus
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                          onClick={() => setShowLockPwd(v => !v)}
-                        >
-                          {showLockPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={toggleLock} disabled={secLockLoading || !lockTogglePassword}>
-                          {secLockLoading && <RefreshCw className="h-3.5 w-3.5 animate-spin mr-1" />}
-                          Confirm
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => { setShowLockDialog(false); setLockTogglePassword(""); }}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 2 — Debug unlock password */}
-                <div className="rounded-lg border p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="font-medium text-sm flex items-center gap-2">
-                        <Bug className="h-4 w-4" />
-                        Debug Unlock Password
-                        <Badge variant="outline" className="text-xs text-emerald-600 border-emerald-500">Auto-generated on first boot</Badge>
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        A random password was generated at first container startup and printed to the container logs
-                        (<code className="bg-muted px-1 rounded">docker logs &lt;container&gt;</code>).
-                        Save it — it is never shown again in the UI. Admins can regenerate it; new password is printed to logs.
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="shrink-0"
-                      onClick={() => { setShowRegenForm(v => !v); setSecLockError(null); }}
-                    >
-                      Regenerate
-                    </Button>
-                  </div>
-
-                  {showRegenForm && (
-                    <div className="rounded-md border bg-muted/40 p-3 space-y-2">
-                      <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                        ⚠️ This invalidates the current debug password. The new one will be printed to container logs only.
-                      </p>
-                      <Label className="text-xs">Your account password (to confirm)</Label>
-                      <Input
-                        type="password"
-                        placeholder="Your account password"
-                        value={regenPassword}
-                        onChange={e => setRegenPassword(e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter") regenDebugPwd(); }}
-                        autoFocus
-                      />
-                      <div className="flex gap-2 pt-1">
-                        <Button size="sm" onClick={regenDebugPwd} disabled={secLockLoading || !regenPassword}>
-                          {secLockLoading && <RefreshCw className="h-3.5 w-3.5 animate-spin mr-1" />}
-                          Confirm Regenerate
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => { setShowRegenForm(false); setRegenPassword(""); }}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 3 — Activate debug mode */}
-                <div className="rounded-lg border p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-medium text-sm flex items-center gap-2">
-                        Debug / Inspection Mode
-                        {debugActive && (
-                          <Badge className="bg-amber-500 text-white text-xs animate-pulse">ACTIVE — 1hr</Badge>
-                        )}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Enter the debug password from container logs to temporarily unlock traffic inspection for 1 hour.
-                        When active, DevTools and browser inspection tools work normally.
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant={debugActive ? "destructive" : "outline"}
-                      className="shrink-0"
-                      onClick={() => {
-                        if (debugActive) disableDebug();
-                        else { setShowDebugInput(v => !v); setSecLockError(null); }
-                      }}
-                    >
-                      {debugActive ? "Disable Debug Mode" : "Activate Debug Mode"}
-                    </Button>
-                  </div>
-
-                  {showDebugInput && !debugActive && (
-                    <div className="rounded-md border bg-muted/40 p-3 space-y-2">
-                      <Label className="text-xs">Debug unlock password (from container logs)</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          type="password"
-                          placeholder="Paste debug password here"
-                          value={debugInput}
-                          onChange={e => setDebugInput(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter") activateDebug(); }}
-                          autoFocus
-                        />
-                        <Button size="sm" onClick={activateDebug} disabled={secLockLoading || !debugInput}>
-                          {secLockLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : "Unlock"}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Advanced Settings */}
-          <TabsContent value="advanced" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Configuration Export/Import</CardTitle>
-                <CardDescription>
-                  Export current configuration or import from file
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="config-json">Configuration JSON</Label>
-                  <Textarea
-                    id="config-json"
-                    rows={12}
-                    value={JSON.stringify(authConfig, null, 2)}
-                    onChange={(e) => {
-                      try {
-                        setAuthConfig(JSON.parse(e.target.value));
-                      } catch (err) {
-                        console.error("Invalid JSON");
-                      }
-                    }}
-                    className="font-mono text-sm"
-                  />
-                </div>
-                <div className="flex space-x-2">
-                  <Button variant="outline" onClick={copyConfig}>
-                    <Copy className="h-4 w-4 mr-2" />
-                    Copy to Clipboard
-                  </Button>
-                  <Button variant="outline">
-                    Import from File
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Alert>
-              <CheckCircle className="h-4 w-4" />
-              <AlertDescription>
-                Changes to authentication configuration require application restart.
-                Always test configuration in a development environment first.
-              </AlertDescription>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <CardTitle className="flex items-center gap-2 text-base">
+              {secLockEnabled ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4 text-muted-foreground" />}
+              Browser inspection lock
+            </CardTitle>
+            <Badge variant="outline">{secLockEnabled ? "On" : "Off"}</Badge>
+          </div>
+          <CardDescription>
+            Blocks browser developer tools for all users and signs API requests to detect tampering.
+            An administrator can temporarily allow inspection with the debug password printed in the server logs.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          {secLockError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{secLockError}</AlertDescription>
             </Alert>
-          </TabsContent>
-        </Tabs>
-      </div>
+          )}
+          {secLockSuccess && (
+            <Alert>
+              <CheckCircle2 className="h-4 w-4 text-success" />
+              <AlertDescription>{secLockSuccess}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="grid gap-3 rounded-lg border p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">Developer tools lock</p>
+                <p className="text-xs text-muted-foreground">Requires your password to change.</p>
+              </div>
+              <Switch checked={secLockEnabled} disabled={secLockLoading}
+                onCheckedChange={() => { setSecLockError(null); setShowLockDialog(true); }} aria-label="Developer tools lock" />
+            </div>
+            {showLockDialog && (
+              <div className="grid gap-2 rounded-md bg-muted/50 p-3">
+                <Label htmlFor="lock-pw">{secLockEnabled ? "Turn off" : "Turn on"} — confirm with your password</Label>
+                <div className="relative">
+                  <Input id="lock-pw" type={showLockPwd ? "text" : "password"} value={lockTogglePassword}
+                    onChange={e => setLockTogglePassword(e.target.value)} className="pr-10"
+                    onKeyDown={e => { if (e.key === "Enter") toggleLock(); }} autoFocus />
+                  <button type="button" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowLockPwd(v => !v)} aria-label={showLockPwd ? "Hide password" : "Show password"}>
+                    {showLockPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={toggleLock} disabled={secLockLoading || !lockTogglePassword}>
+                    {secLockLoading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}Confirm
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => { setShowLockDialog(false); setLockTogglePassword(""); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="grid gap-3 rounded-lg border p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">Debug password</p>
+                <p className="text-xs text-muted-foreground">
+                  Generated on first start and printed to the server logs (<code className="font-mono">docker logs indexsphere-prod</code>). Never shown in the UI.
+                </p>
+              </div>
+              <Button size="sm" variant="outline" className="shrink-0" onClick={() => { setShowRegenForm(v => !v); setSecLockError(null); }}>Regenerate</Button>
+            </div>
+            {showRegenForm && (
+              <div className="grid gap-2 rounded-md bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground">The current debug password stops working; the new one is printed to the server logs only.</p>
+                <Label htmlFor="regen-pw">Your password</Label>
+                <Input id="regen-pw" type="password" value={regenPassword} onChange={e => setRegenPassword(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") regenDebugPwd(); }} autoFocus />
+                <div className="flex gap-2">
+                  <Button size="sm" variant="destructive" onClick={regenDebugPwd} disabled={secLockLoading || !regenPassword}>
+                    {secLockLoading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}Regenerate
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => { setShowRegenForm(false); setRegenPassword(""); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="grid gap-3 rounded-lg border p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  Inspection mode
+                  {debugActive && <Badge variant="outline">Active for 1 hour</Badge>}
+                </p>
+                <p className="text-xs text-muted-foreground">Allows developer tools in this browser for one hour.</p>
+              </div>
+              <Button size="sm" variant={debugActive ? "destructive" : "outline"} className="shrink-0"
+                onClick={() => { if (debugActive) disableDebug(); else { setShowDebugInput(v => !v); setSecLockError(null); } }}>
+                {debugActive ? "End inspection" : "Start inspection"}
+              </Button>
+            </div>
+            {showDebugInput && !debugActive && (
+              <form className="flex gap-2" onSubmit={e => { e.preventDefault(); activateDebug(); }}>
+                <Input type="password" placeholder="Debug password" value={debugInput} onChange={e => setDebugInput(e.target.value)} autoFocus aria-label="Debug password" />
+                <Button type="submit" size="sm" disabled={secLockLoading || !debugInput}>
+                  {secLockLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Unlock"}
+                </Button>
+              </form>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

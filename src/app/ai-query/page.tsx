@@ -12,7 +12,7 @@
  *    to the appropriate API format (OpenAI-compatible or Anthropic native).
  */
 import { useState, useEffect, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,9 +24,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { sanitize, type RedactionEntry } from "@/lib/pii-sanitizer";
 import { getElasticsearchClient } from "@/lib/elasticsearch";
 import { useConnection } from "@/contexts/connection-context";
+import { PageHeader } from "@/components/app";
 import {
-  Sparkles, Play, Settings, Loader2, Copy, CheckCheck,
-  AlertTriangle, Database, ChevronDown, ChevronUp,
+  Play, Settings, Loader2, Copy, CheckCheck,
+  AlertTriangle, AlertCircle, Database, ChevronDown, ChevronUp,
   ShieldCheck, Eye, EyeOff, Trash2, Info,
 } from "lucide-react";
 
@@ -90,8 +91,16 @@ const PROVIDERS: Provider[] = [
 ];
 
 const LS_PREFIX = "is:ai:";
-function lsGet(k: string): string { return (typeof window !== "undefined" && localStorage.getItem(LS_PREFIX + k)) || ""; }
-function lsSet(k: string, v: string): void { if (typeof window !== "undefined") { if (v) localStorage.setItem(LS_PREFIX + k, v); else localStorage.removeItem(LS_PREFIX + k); } }
+function lsGet(k: string): string {
+  if (typeof window === "undefined") return "";
+  try { return localStorage.getItem(LS_PREFIX + k) || ""; } catch { return ""; }
+}
+function lsSet(k: string, v: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (v) localStorage.setItem(LS_PREFIX + k, v); else localStorage.removeItem(LS_PREFIX + k);
+  } catch { /* storage unavailable */ }
+}
 
 interface SearchResult { hits?: { hits: unknown[]; total?: { value: number } | number }; error?: string }
 
@@ -180,7 +189,7 @@ export default function AiQueryPage() {
     if (!naturalLanguage.trim()) return;
     const resolvedKey = apiKey.trim();
     if (!resolvedKey && providerId !== "ollama") {
-      setError("Please enter an API key in the AI Settings panel.");
+      setError("Enter an API key under Provider settings.");
       setShowConfig(true);
       return;
     }
@@ -240,42 +249,31 @@ export default function AiQueryPage() {
   const configOk = hasKey || providerId === "ollama";
 
   return (
-    <div className="space-y-6 p-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Sparkles className="h-6 w-6 text-primary" />
-            AI Query Builder
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Natural language → Elasticsearch DSL · API key stored locally only · PII auto-redacted
-          </p>
-        </div>
-        <div className="flex gap-2 items-center">
-          {configOk
-            ? <Badge variant="outline" className="text-emerald-600 border-emerald-500"><ShieldCheck className="h-3 w-3 mr-1"/>Key stored locally</Badge>
-            : <Badge variant="outline" className="text-amber-500 border-amber-400"><AlertTriangle className="h-3 w-3 mr-1"/>No API key set</Badge>
-          }
-          <Button variant="outline" size="sm" onClick={() => setShowConfig(v => !v)}>
-            <Settings className="h-4 w-4 mr-1" /> AI Settings
-            {showConfig ? <ChevronUp className="h-3.5 w-3.5 ml-1" /> : <ChevronDown className="h-3.5 w-3.5 ml-1" />}
+    <div className="space-y-6">
+      <PageHeader
+        title="AI query"
+        description="Describe a search in plain language and get Elasticsearch query DSL. Personal data is redacted before anything is sent to the AI provider."
+        meta={configOk
+          ? <Badge variant="outline" className="gap-1 font-normal"><ShieldCheck className="h-3 w-3 text-success" />API key stored in this browser</Badge>
+          : <Badge variant="outline" className="gap-1 font-normal"><AlertTriangle className="h-3 w-3 text-warning" />No API key set</Badge>}
+        actions={
+          <Button variant="outline" onClick={() => setShowConfig(v => !v)} aria-expanded={showConfig}>
+            <Settings className="mr-1 h-4 w-4" /> Provider settings
+            {showConfig ? <ChevronUp className="ml-1 h-3.5 w-3.5" /> : <ChevronDown className="ml-1 h-3.5 w-3.5" />}
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Config panel */}
       {showConfig && (
-        <Card className="border-dashed">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Settings className="h-4 w-4" /> AI Provider Configuration
-              <Badge variant="secondary" className="text-xs ml-auto">Stored in your browser only — never sent to server</Badge>
-            </CardTitle>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Provider settings</CardTitle>
+            <CardDescription>Stored in your browser only. The key is sent with each request and never saved on the server.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-1.5">
+              <div className="grid gap-2">
                 <Label>Provider</Label>
                 <Select value={providerId} onValueChange={id => setProviderId(id)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -286,7 +284,7 @@ export default function AiQueryPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1.5">
+              <div className="grid gap-2">
                 <Label>Model</Label>
                 {["azure", "custom"].includes(providerId) ? (
                   <Input value={customModel} onChange={e => setCustomModel(e.target.value)} placeholder="model name or deployment ID" />
@@ -300,16 +298,16 @@ export default function AiQueryPage() {
                 )}
               </div>
               {["azure", "custom"].includes(providerId) && (
-                <div className="space-y-1.5">
+                <div className="grid gap-2">
                   <Label>Base URL</Label>
                   <Input value={customBaseUrl} onChange={e => setCustomBaseUrl(e.target.value)} placeholder={provider.keyHint} />
                 </div>
               )}
             </div>
-            <div className="space-y-1.5">
+            <div className="grid gap-2">
               <Label className="flex items-center gap-2">
-                API Key
-                {hasKey && <Badge variant="outline" className="text-emerald-600 border-emerald-500 text-xs"><ShieldCheck className="h-3 w-3 mr-0.5"/>Saved</Badge>}
+                API key
+                {hasKey && <Badge variant="outline" className="gap-0.5 text-xs font-normal"><ShieldCheck className="h-3 w-3 text-success" />Saved</Badge>}
               </Label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
@@ -324,25 +322,26 @@ export default function AiQueryPage() {
                     type="button"
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     onClick={() => setShowKey(v => !v)}
+                    aria-label={showKey ? "Hide API key" : "Show API key"}
                   >
                     {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
                 {hasKey && (
-                  <Button variant="outline" size="icon" onClick={clearKey} title="Delete saved key">
+                  <Button variant="outline" size="icon" onClick={clearKey} title="Delete saved key" aria-label="Delete saved key">
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 )}
               </div>
               <p className="text-xs text-muted-foreground flex items-center gap-1">
                 <Info className="h-3 w-3 shrink-0" />
-                {provider.keyHint} · Saved to <code className="bg-muted px-1 rounded">localStorage</code> only — never stored on the server.
+                {provider.keyHint}. Saved to this browser&apos;s local storage only.
               </p>
             </div>
             <Alert>
               <ShieldCheck className="h-4 w-4" />
               <AlertDescription className="text-xs">
-                <strong>Privacy:</strong> Your query is automatically scanned for PII (emails, IPs, tokens, passwords, hashes) and sensitive fields are redacted <em>before</em> anything leaves this browser. Your cluster credentials and index data are never included.
+                <strong>Privacy:</strong> your text is scanned for personal data (emails, IPs, tokens, passwords, hashes) and redacted before it leaves this browser. Cluster credentials and index data are never included.
               </AlertDescription>
             </Alert>
           </CardContent>
@@ -353,59 +352,60 @@ export default function AiQueryPage() {
         {/* Input */}
         <div className="space-y-4">
           <Card>
-            <CardHeader><CardTitle className="text-base">Describe Your Query</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">Describe your search</CardTitle></CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-1.5">
-                <Label>Target Index <span className="text-muted-foreground text-xs">(optional — improves accuracy)</span></Label>
+              <div className="grid gap-2">
+                <Label>Index <span className="text-xs font-normal text-muted-foreground">(optional, improves accuracy)</span></Label>
                 <Select value={index} onValueChange={setIndex}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select index…" />
+                    <SelectValue placeholder="Select an index" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">No specific index</SelectItem>
                     {indices.map(i => <SelectItem key={i} value={i}>{i}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                {!isConnected && <p className="text-xs text-muted-foreground">Connect to a cluster to load index list.</p>}
+                {!isConnected && <p className="text-xs text-muted-foreground">Connect to a cluster to load the index list.</p>}
               </div>
-              <div className="space-y-1.5">
-                <Label>Natural Language Query</Label>
+              <div className="grid gap-2">
+                <Label htmlFor="ai-nl">Request</Label>
                 <Textarea
+                  id="ai-nl"
                   value={naturalLanguage}
                   onChange={e => setNaturalLanguage(e.target.value)}
                   placeholder="Describe what you want to search for…"
                   rows={4}
                   onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) generateDsl(); }}
                 />
-                <p className="text-xs text-muted-foreground">Ctrl+Enter to generate</p>
+                <p className="text-xs text-muted-foreground">Ctrl+Enter to generate.</p>
               </div>
               {redactions.length > 0 && (
-                <Alert className="border-amber-500/40 bg-amber-500/5">
-                  <ShieldCheck className="h-4 w-4 text-amber-500" />
-                  <AlertDescription className="text-xs text-amber-700 dark:text-amber-400">
-                    <strong>PII detected and will be redacted before sending:</strong>{" "}
-                    {redactions.map(r => `${r.count}× ${r.type}`).join(", ")}.
+                <Alert>
+                  <ShieldCheck className="h-4 w-4 text-warning" />
+                  <AlertDescription className="text-xs">
+                    <span><strong>Personal data detected and redacted before sending:</strong>{" "}
+                    {redactions.map(r => `${r.count}× ${r.type}`).join(", ")}.</span>
                     {sanitizedQuery && (
                       <details className="mt-1">
-                        <summary className="cursor-pointer hover:underline">Preview sanitized query</summary>
-                        <pre className="mt-1 text-xs bg-muted rounded p-2 whitespace-pre-wrap">{sanitizedQuery}</pre>
+                        <summary className="cursor-pointer hover:underline">Preview what will be sent</summary>
+                        <pre className="mt-1 whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs">{sanitizedQuery}</pre>
                       </details>
                     )}
                   </AlertDescription>
                 </Alert>
               )}
               <Button onClick={generateDsl} disabled={loading || !naturalLanguage.trim()} className="w-full">
-                {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                {loading ? "Generating…" : "Generate DSL"}
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {loading ? "Generating…" : "Generate query"}
               </Button>
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-sm text-muted-foreground">Example Queries</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">Examples</CardTitle></CardHeader>
             <CardContent className="space-y-1.5">
               {EXAMPLE_QUERIES.map((q, i) => (
                 <button key={i}
-                  className="w-full text-left text-xs px-3 py-2 rounded bg-muted hover:bg-muted/80 transition-colors"
+                  className="w-full rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
                   onClick={() => setNaturalLanguage(q)}>
                   {q}
                 </button>
@@ -419,46 +419,44 @@ export default function AiQueryPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Generated DSL</CardTitle>
+                <CardTitle className="text-base">Generated query</CardTitle>
                 <div className="flex gap-2">
                   {dsl && (
                     <>
-                      <Button size="sm" variant="outline" onClick={copyDsl}>
-                        {copied ? <CheckCheck className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                      <Button size="sm" variant="outline" onClick={copyDsl} aria-label="Copy query">
+                        {copied ? <CheckCheck className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
                       </Button>
                       <Button size="sm" onClick={executeQuery} disabled={executing || index === "__none__"}>
                         {executing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Play className="h-3.5 w-3.5 mr-1" />}
-                        Execute
+                        Run
                       </Button>
                     </>
                   )}
                 </div>
               </div>
               {dsl && index === "__none__" && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 mt-1">
-                  <AlertTriangle className="h-3 w-3" /> Select an index above to execute the query
+                <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                  <AlertTriangle className="h-3 w-3 text-warning" /> Select an index to run the query.
                 </p>
               )}
             </CardHeader>
             <CardContent>
               {!dsl && !error && (
-                <div className="text-center text-muted-foreground py-12 text-sm">
-                  <Sparkles className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                  Generated DSL will appear here
-                </div>
+                <p className="py-12 text-center text-sm text-muted-foreground">The generated query appears here.</p>
               )}
               {error && (
-                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /> {error}
-                </div>
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
               )}
-              {dsl && <pre className="text-xs font-mono bg-muted rounded p-3 overflow-auto max-h-72">{dsl}</pre>}
+              {dsl && <pre className="max-h-72 overflow-auto rounded-md bg-muted p-3 font-mono text-xs">{dsl}</pre>}
               {results?.hits && (
                 <>
                   <Separator className="my-4" />
                   <div className="flex items-center gap-2 mb-3">
                     <Database className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">
+                    <span className="text-sm font-medium tabular-nums">
                       {hitsCount.toLocaleString()} hit{hitsCount !== 1 ? "s" : ""}
                     </span>
                   </div>
@@ -466,7 +464,7 @@ export default function AiQueryPage() {
                     {results.hits.hits.slice(0, 10).map((hit, i) => {
                       const h = hit as Record<string, unknown>;
                       return (
-                        <div key={i} className="text-xs font-mono bg-muted rounded p-2">
+                        <div key={i} className="rounded-md bg-muted p-2 font-mono text-xs">
                           <div className="text-muted-foreground mb-0.5">{h._index as string} / {h._id as string}</div>
                           <pre className="whitespace-pre-wrap">{JSON.stringify(h._source, null, 2).slice(0, 400)}</pre>
                         </div>

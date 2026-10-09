@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { getDatabase } from '@/lib/database-sqlite';
+import { validateChannels } from '@/lib/alert-engine';
 
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = getUserFromRequest(request);
@@ -13,6 +14,11 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 
   const { id } = await params;
   const body = await request.json();
+  const channelError = validateChannels(body.channels);
+  if (channelError) return NextResponse.json({ error: channelError }, { status: 400 });
+  if (body.operator !== undefined && !['gt', 'gte', 'lt', 'lte'].includes(body.operator)) {
+    return NextResponse.json({ error: 'operator must be gt|gte|lt|lte' }, { status: 400 });
+  }
   if (body.channels && Array.isArray(body.channels)) body.channels = JSON.stringify(body.channels);
 
   const updated = getDatabase().updateAlertRule(id, body);

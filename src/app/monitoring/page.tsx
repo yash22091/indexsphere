@@ -1,15 +1,17 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Link from "next/link";
+import { EmptyState, HealthBadge, PageHeader, StatCard, StatGrid, StatusDot } from "@/components/app";
 import { useConnection } from "@/contexts/connection-context";
 import {
-  Activity, Cpu, Database, AlertTriangle, CheckCircle, XCircle,
-  Wifi, WifiOff, Settings, RefreshCw, Zap, Server, PlugZap
+  AlertTriangle, Database, PlugZap, RefreshCw, Server, Settings, XCircle, Zap,
 } from "lucide-react";
 
 interface Metrics {
@@ -50,51 +52,43 @@ function formatBytes(bytes: number): string {
   return (bytes / 1e3).toFixed(0) + " KB";
 }
 
-function statusColor(status: string): string {
-  if (status === "green") return "text-emerald-500";
-  if (status === "yellow") return "text-yellow-500";
-  if (status === "red") return "text-red-500";
-  return "text-muted-foreground";
-}
-
 function levelFor(value: number, warn: number, crit: number): "ok" | "warn" | "crit" {
   if (value >= crit) return "crit";
   if (value >= warn) return "warn";
   return "ok";
 }
 
-function levelColor(level: "ok" | "warn" | "crit"): string {
-  if (level === "crit") return "bg-red-500";
-  if (level === "warn") return "bg-yellow-500";
-  return "bg-emerald-500";
-}
+const LEVEL_BAR = { ok: "bg-success", warn: "bg-warning", crit: "bg-destructive" } as const;
+const LEVEL_TEXT = { ok: "text-foreground", warn: "text-warning", crit: "text-destructive" } as const;
 
 function MiniChart({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2) {
+    return <div className="flex h-12 items-center text-xs text-muted-foreground">Collecting samples…</div>;
+  }
   const max = Math.max(...data, 100);
   const pts = data.map((v, i) => `${(i / (data.length - 1)) * 200},${60 - (v / max) * 55}`).join(" ");
   return (
-    <svg viewBox="0 0 200 60" className="w-full h-12 opacity-80">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+    <svg viewBox="0 0 200 60" className="h-12 w-full" preserveAspectRatio="none" aria-hidden>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }
 
 function GaugeBar({ value, warn, crit, label }: { value: number; warn: number; crit: number; label: string }) {
   const level = levelFor(value, warn, crit);
-  const color = level === "crit" ? "text-red-500" : level === "warn" ? "text-yellow-500" : "text-emerald-500";
   return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>{label}</span>
-        <span className={`font-mono font-bold ${color}`}>{value.toFixed(1)}%</span>
+    <div className="space-y-1.5">
+      <div className="flex justify-between text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className={`font-medium tabular-nums ${LEVEL_TEXT[level]}`}>{value.toFixed(1)}%</span>
       </div>
-      <div className="relative h-2 w-full rounded-full bg-muted overflow-hidden">
+      <div className="relative h-2 w-full overflow-hidden rounded-full bg-muted">
         <div
-          className={`h-full rounded-full transition-all duration-500 ${levelColor(level)}`}
+          className={`h-full rounded-full transition-all duration-500 ${LEVEL_BAR[level]}`}
           style={{ width: `${Math.min(100, value)}%` }}
         />
-        <div className="absolute top-0 h-full w-0.5 bg-yellow-400 opacity-60" style={{ left: `${warn}%` }} />
-        <div className="absolute top-0 h-full w-0.5 bg-red-400 opacity-60" style={{ left: `${crit}%` }} />
+        <div className="absolute top-0 h-full w-px bg-warning" style={{ left: `${warn}%` }} title={`Warning at ${warn}%`} />
+        <div className="absolute top-0 h-full w-px bg-destructive" style={{ left: `${crit}%` }} title={`Critical at ${crit}%`} />
       </div>
     </div>
   );
@@ -207,110 +201,98 @@ export default function MonitoringPage() {
     setShowSettings(false);
   };
 
-  const StatusIcon = connected
-    ? () => <Wifi className="h-4 w-4 text-emerald-500 animate-pulse" />
-    : () => <WifiOff className="h-4 w-4 text-red-500" />;
-
   return (
-    <div className="space-y-6 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Activity className="h-6 w-6 text-primary" />
-            Real-Time Monitoring
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">Live cluster metrics — updates every 5 seconds</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-sm">
-            <StatusIcon />
-            <span className={connected ? "text-emerald-600" : "text-red-500"}>
+    <div className="space-y-6">
+      <PageHeader
+        title="Live monitoring"
+        description="Cluster metrics streamed every 5 seconds, checked against your alert thresholds."
+        meta={
+          <>
+            <Badge variant="outline" className="gap-1.5 font-medium">
+              <StatusDot status={connected ? "green" : "red"} />
               {connected ? "Live" : "Disconnected"}
-            </span>
-          </div>
-          {metrics && (
-            <Badge variant={metrics.cluster_status === "green" ? "default" : "destructive"}
-              className={metrics.cluster_status === "green" ? "bg-emerald-500" : metrics.cluster_status === "yellow" ? "bg-yellow-500" : ""}>
-              {metrics.cluster_status.toUpperCase()}
             </Badge>
-          )}
-          <Button variant="outline" size="sm" onClick={() => setShowSettings(!showSettings)}>
-            <Settings className="h-4 w-4 mr-1" /> Thresholds
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => reconnectServer()} disabled={reconnecting}>
-            {reconnecting
-              ? <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
-              : <RefreshCw className="h-4 w-4 mr-1" />}
-            {reconnecting ? 'Reconnecting…' : 'Reconnect'}
-          </Button>
-        </div>
-      </div>
+            {metrics && <HealthBadge status={metrics.cluster_status} />}
+          </>
+        }
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => setShowSettings(!showSettings)} aria-expanded={showSettings}>
+              <Settings className="h-4 w-4 mr-2" />
+              Thresholds
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => reconnectServer()} disabled={reconnecting}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${reconnecting ? "animate-spin" : ""}`} />
+              {reconnecting ? "Reconnecting…" : "Reconnect"}
+            </Button>
+          </>
+        }
+      />
 
-      {/* Active alerts banner */}
       {alerts.length > 0 && (
-        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 flex items-start gap-2">
-          <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
-          <div className="text-sm text-yellow-700 dark:text-yellow-400 space-y-0.5">
-            {alerts.map((a, i) => <div key={i}>{a}</div>)}
-          </div>
-        </div>
+        <Alert>
+          <AlertTriangle className="h-4 w-4 text-warning" />
+          <AlertTitle>Thresholds exceeded</AlertTitle>
+          <AlertDescription>
+            <ul className="list-inside list-disc">
+              {alerts.map((a, i) => <li key={i}>{a}</li>)}
+            </ul>
+          </AlertDescription>
+        </Alert>
       )}
 
       {reconnecting && (
-        <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-600 dark:text-blue-400 flex items-center gap-2">
-          <PlugZap className="h-4 w-4 shrink-0 animate-pulse" />
-          Re-registering cluster connection on server… stream will resume shortly.
-        </div>
+        <Alert>
+          <PlugZap className="h-4 w-4" />
+          <AlertDescription>Re-registering the cluster connection on the server. The stream resumes shortly.</AlertDescription>
+        </Alert>
       )}
 
       {error && error !== 'no_client_needs_reconnect' && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
-          <XCircle className="h-4 w-4 shrink-0" /> {error}
-        </div>
+        <Alert variant="destructive">
+          <XCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {error === 'no_client_needs_reconnect' && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 flex items-start gap-3">
-          <PlugZap className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
-              Server lost the cluster connection (e.g. after a restart).
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Credentials are not stored in the browser after a page refresh. Please reconnect to restore the stream.
-            </p>
-            <Link href="/connect">
-              <button className="mt-1 text-xs font-medium px-3 py-1.5 rounded bg-amber-500 text-white hover:bg-amber-600 transition-colors">
-                Go to Connect →
-              </button>
-            </Link>
-          </div>
-        </div>
+        <EmptyState
+          icon={PlugZap}
+          title="Cluster connection needed"
+          description="The server has no active cluster connection for you (for example after a restart). Connect again to resume the stream."
+          action={<Button size="sm" asChild><Link href="/connections">Go to connections</Link></Button>}
+        />
       )}
 
-      {/* Threshold settings panel */}
       {showSettings && (
         <Card>
-          <CardHeader><CardTitle className="text-base">Alert Thresholds</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-base">Alert thresholds</CardTitle>
+            <CardDescription>Values at which metrics are flagged as warning or critical on this page.</CardDescription>
+          </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               {([
-                ["cpu_warn", "CPU Warn %"], ["cpu_crit", "CPU Crit %"],
-                ["heap_warn", "Heap Warn %"], ["heap_crit", "Heap Crit %"],
-                ["gc_warn", "GC Warn %"], ["gc_crit", "GC Crit %"],
-                ["unassigned_shards_warn", "Unassigned Warn"], ["unassigned_shards_crit", "Unassigned Crit"],
+                ["cpu_warn", "CPU warning (%)"], ["cpu_crit", "CPU critical (%)"],
+                ["heap_warn", "Heap warning (%)"], ["heap_crit", "Heap critical (%)"],
+                ["gc_warn", "GC warning (%)"], ["gc_crit", "GC critical (%)"],
+                ["unassigned_shards_warn", "Unassigned warning"], ["unassigned_shards_crit", "Unassigned critical"],
               ] as [keyof Thresholds, string][]).map(([key, label]) => (
-                <div key={key} className="space-y-1">
-                  <label className="text-xs text-muted-foreground">{label}</label>
-                  <input type="number" value={thresholds[key]} min={0} max={1000}
+                <div key={key} className="grid gap-2">
+                  <Label htmlFor={`t-${key}`} className="text-xs text-muted-foreground">{label}</Label>
+                  <Input
+                    id={`t-${key}`}
+                    type="number"
+                    value={thresholds[key]}
+                    min={0}
+                    max={1000}
                     onChange={e => setThresholds(t => ({ ...t, [key]: Number(e.target.value) }))}
-                    className="w-full rounded border bg-background px-2 py-1 text-sm" />
+                  />
                 </div>
               ))}
             </div>
-            <div className="flex gap-2 mt-4">
-              <Button size="sm" onClick={saveThresholds}>Save</Button>
+            <div className="mt-4 flex gap-2">
+              <Button size="sm" onClick={saveThresholds}>Save thresholds</Button>
               <Button size="sm" variant="outline" onClick={() => setShowSettings(false)}>Cancel</Button>
             </div>
           </CardContent>
@@ -318,85 +300,59 @@ export default function MonitoringPage() {
       )}
 
       {!metrics && !error && (
-        <div className="text-center text-muted-foreground py-12">
-          <Activity className="h-8 w-8 mx-auto mb-2 animate-pulse" />
-          Waiting for first metrics sample…
+        <div className="space-y-6">
+          <StatGrid>
+            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[104px] rounded-xl" />)}
+          </StatGrid>
+          <p className="text-center text-sm text-muted-foreground">Waiting for the first metrics sample…</p>
         </div>
       )}
 
       {metrics && (
         <>
-          {/* KPI row */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="pt-4 pb-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
-                  <Cpu className="h-3.5 w-3.5" /> Nodes
-                </div>
-                <div className="text-3xl font-bold">{metrics.node_count}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
-                  <Database className="h-3.5 w-3.5" /> Active Shards
-                </div>
-                <div className="text-3xl font-bold">{metrics.active_shards.toLocaleString()}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
-                  <AlertTriangle className="h-3.5 w-3.5" /> Unassigned
-                </div>
-                <div className={`text-3xl font-bold ${metrics.unassigned_shards > 0 ? "text-yellow-500" : "text-emerald-500"}`}>
-                  {metrics.unassigned_shards}
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3 space-y-2">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
-                  <Zap className="h-3.5 w-3.5" /> Indexing Rate
-                </div>
-                <div className="text-3xl font-bold">{metrics.indexing_rate.toFixed(1)}<span className="text-base text-muted-foreground ml-1">doc/s</span></div>
-              </CardContent>
-            </Card>
-          </div>
+          <StatGrid>
+            <StatCard label="Nodes" icon={Server} value={metrics.node_count} />
+            <StatCard label="Active shards" icon={Database} value={metrics.active_shards.toLocaleString()} />
+            <StatCard
+              label="Unassigned shards"
+              icon={AlertTriangle}
+              value={metrics.unassigned_shards}
+              tone={metrics.unassigned_shards >= thresholds.unassigned_shards_crit ? "danger" : metrics.unassigned_shards >= thresholds.unassigned_shards_warn ? "warning" : "default"}
+            />
+            <StatCard label="Indexing rate" icon={Zap} value={metrics.indexing_rate.toFixed(1)} hint="documents per second" />
+          </StatGrid>
 
-          {/* Gauge bars */}
           <Card>
-            <CardHeader><CardTitle className="text-base flex items-center gap-2"><Server className="h-4 w-4" /> Resource Utilisation</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
+            <CardHeader>
+              <CardTitle className="text-base">Resource utilisation</CardTitle>
+              <CardDescription>Markers show the warning and critical thresholds.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
               <GaugeBar value={metrics.cpu_percent} warn={thresholds.cpu_warn} crit={thresholds.cpu_crit} label="CPU" />
-              <GaugeBar value={metrics.heap_percent} warn={thresholds.heap_warn} crit={thresholds.heap_crit} label={`JVM Heap (${formatBytes(metrics.heap_used_bytes)} / ${formatBytes(metrics.heap_max_bytes)})`} />
-              <GaugeBar value={metrics.gc_pressure} warn={thresholds.gc_warn} crit={thresholds.gc_crit} label="GC Pressure" />
+              <GaugeBar value={metrics.heap_percent} warn={thresholds.heap_warn} crit={thresholds.heap_crit} label={`JVM heap (${formatBytes(metrics.heap_used_bytes)} of ${formatBytes(metrics.heap_max_bytes)})`} />
+              <GaugeBar value={metrics.gc_pressure} warn={thresholds.gc_warn} crit={thresholds.gc_crit} label="GC pressure" />
             </CardContent>
           </Card>
 
-          {/* Sparkline charts */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">CPU % (last {cpuHistory.length} samples)</CardTitle></CardHeader>
-              <CardContent>
-                <MiniChart data={cpuHistory} color="#3b82f6" />
-                <div className="text-right text-lg font-bold mt-1">{metrics.cpu_percent.toFixed(1)}%</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">JVM Heap %</CardTitle></CardHeader>
-              <CardContent>
-                <MiniChart data={heapHistory} color="#8b5cf6" />
-                <div className="text-right text-lg font-bold mt-1">{metrics.heap_percent.toFixed(1)}%</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">GC Pressure %</CardTitle></CardHeader>
-              <CardContent>
-                <MiniChart data={gcHistory} color="#f59e0b" />
-                <div className="text-right text-lg font-bold mt-1">{metrics.gc_pressure.toFixed(1)}%</div>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {[
+              { title: "CPU", data: cpuHistory, value: metrics.cpu_percent, color: "var(--chart-1)" },
+              { title: "JVM heap", data: heapHistory, value: metrics.heap_percent, color: "var(--chart-2)" },
+              { title: "GC pressure", data: gcHistory, value: metrics.gc_pressure, color: "var(--chart-4)" },
+            ].map(c => (
+              <Card key={c.title}>
+                <CardHeader className="pb-2">
+                  <div className="flex items-baseline justify-between">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">{c.title}</CardTitle>
+                    <span className="text-lg font-semibold tabular-nums">{c.value.toFixed(1)}%</span>
+                  </div>
+                  <CardDescription className="text-xs">Last {c.data.length} samples</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <MiniChart data={c.data} color={c.color} />
+                </CardContent>
+              </Card>
+            ))}
           </div>
         </>
       )}

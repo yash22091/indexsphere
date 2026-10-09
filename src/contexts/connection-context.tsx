@@ -60,6 +60,19 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
 
     const savedSavedId = localStorage.getItem('current-saved-connection-id');
     if (savedSavedId) setCurrentSavedConnectionId(savedSavedId);
+
+    // Re-attach to the user's server-side cluster session after a page reload
+    fetch('/api/connect')
+      .then(r => (r.ok ? r.json() : null))
+      .then((data: { connected?: boolean; url?: string; serverType?: 'elasticsearch' | 'opensearch'; savedConnectionId?: string | null } | null) => {
+        if (!data?.connected || !data.url) return;
+        const config: ElasticsearchConnectionConfig = { url: data.url, type: data.serverType };
+        setElasticsearchClient(new ElasticsearchClient(config));
+        setConnectionConfig(config);
+        setIsConnected(true);
+        setCurrentSavedConnectionId(data.savedConnectionId ?? null);
+      })
+      .catch(() => {});
   }, [isClient]);
 
   const testConnection = useCallback(async (config: ElasticsearchConnectionConfig): Promise<{ success: boolean; serverType?: string; version?: string }> => {
@@ -77,7 +90,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
         throw new Error(`Connection test failed: ${response.statusText}`);
       }
 
-      const health = await response.json();
+      await response.json();
       
       // Try to get cluster info to detect server type
       try {
@@ -119,8 +132,9 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
     setConnectionError(null);
 
     try {
-      // Test the connection using API route
-      const response = await fetch('/api/cluster/health', {
+      // Open a server-side session for this user. Credentials go to the server
+      // once and are never kept in the browser afterwards.
+      const response = await fetch('/api/connect', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -133,18 +147,18 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
         try { const body = await response.json(); detail = body.message ?? body.error ?? response.statusText; } catch {}
         throw new Error(detail);
       }
-      
-      // If successful, set up the connection
-      const client = new ElasticsearchClient(config);
+
+      const { auth: _auth, ...configWithoutAuth } = config;
+      const client = new ElasticsearchClient(configWithoutAuth);
       setElasticsearchClient(client);
-      setConnectionConfig(config);
+      setConnectionConfig(configWithoutAuth);
       setIsConnected(true);
       setConnectionError(null);
-      
-      // Store current connection WITHOUT credentials (auth is session-only)
+      setCurrentSavedConnectionId(null);
+
       if (isClient) {
-        const { auth: _auth, ...configWithoutAuth } = config;
         localStorage.setItem('elasticsearch-current-connection', JSON.stringify(configWithoutAuth));
+        localStorage.removeItem('current-saved-connection-id');
       }
       
     } catch (error) {
@@ -157,6 +171,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   }, [isClient]);
 
   const disconnect = useCallback(() => {
+    fetch('/api/connect', { method: 'DELETE' }).catch(() => {});
     clearElasticsearchClient();
     setConnectionConfig(null);
     setIsConnected(false);
@@ -222,7 +237,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
     } catch (error) {
       console.error('Failed to select connection:', error);
     }
-  }, [savedConnections, connect, isClient]);
+  }, [savedConnections, connect]);
 
   // Activate a server-side saved connection (password stays server-side encrypted, never sent to browser)
   const activateSavedConnection = useCallback(async (id: string | number, url: string, type = 'elasticsearch') => {
@@ -234,7 +249,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
       if (!res.ok || !data.ok) throw new Error(data.error ?? 'Activation failed');
 
       // Register a browser-side proxy client (no auth — server already has the real client)
-      const config: ElasticsearchConnectionConfig = { url, type: type as 'elasticsearch' | 'opensearch' };
+      const config: ElasticsearchConnectionConfig = { url, type: (data.serverType ?? type) as 'elasticsearch' | 'opensearch' };
       const client = new ElasticsearchClient(config);
       setElasticsearchClient(client);
       setConnectionConfig(config);

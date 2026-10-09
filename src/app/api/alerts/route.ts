@@ -5,13 +5,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { getDatabase } from '@/lib/database-sqlite';
+import { validateChannels } from '@/lib/alert-engine';
 
 export async function GET(request: NextRequest) {
   const user = getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
   const db = getDatabase();
-  const rules = db.getAlertRules();
+  // Channel URLs (Slack/webhook) embed secrets — only admins see them
+  const rules = db.getAlertRules().map(r => (user.role === 'admin' ? r : { ...r, channels: '[]' }));
   const triggers = db.getAlertTriggers(50);
   return NextResponse.json({ rules, triggers });
 }
@@ -30,6 +32,8 @@ export async function POST(request: NextRequest) {
   if (!['gt', 'gte', 'lt', 'lte'].includes(operator)) {
     return NextResponse.json({ error: 'operator must be gt|gte|lt|lte' }, { status: 400 });
   }
+  const channelError = validateChannels(channels);
+  if (channelError) return NextResponse.json({ error: channelError }, { status: 400 });
 
   const rule = getDatabase().createAlertRule({
     name, metric, operator,

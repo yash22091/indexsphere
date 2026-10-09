@@ -8,12 +8,14 @@ export class ElasticsearchClient {
   private headers: Record<string, string>;
   private serverType: 'elasticsearch' | 'opensearch';
   private useApiProxy: boolean;
+  private verifyTls: boolean;
 
   constructor(config: ElasticsearchConnectionConfig, useApiProxy = true) {
     this.baseUrl = config.url;
     this.auth = config.auth;
     this.serverType = config.type || 'elasticsearch'; // Default to elasticsearch
     this.useApiProxy = useApiProxy;
+    this.verifyTls = config.verifyTls === true;
     this.headers = {
       'Content-Type': 'application/json',
       ...config.headers,
@@ -52,17 +54,14 @@ export class ElasticsearchClient {
     try {
       // If using API proxy, route through Next.js API routes
       if (this.useApiProxy) {
+        // Browser mode: the server resolves the cluster (URL + credentials) from the
+        // user's server-side session. Nothing about the cluster is sent from here.
         const apiUrl = `/api/es-proxy${endpoint}`;
-        
+
         const response = await fetch(apiUrl, {
           ...options,
           headers: {
             'Content-Type': 'application/json',
-            'X-ES-Config': JSON.stringify({
-              url: this.baseUrl,
-              auth: this.auth,
-              headers: this.headers
-            }),
             ...options.headers,
           },
         });
@@ -83,18 +82,21 @@ export class ElasticsearchClient {
         const url = `${this.baseUrl}${endpoint}`;
         
         const response = await sslBypassFetch(url, {
-          ...options,
+          method,
+          body: typeof options.body === 'string' ? options.body : undefined,
           headers: {
             ...this.headers,
-            ...options.headers,
+            ...(options.headers as Record<string, string> | undefined),
           },
+          verifyTls: this.verifyTls,
         });
 
         const duration = Date.now() - startTime;
 
         if (!response.ok) {
+          const detail = (await response.text()).slice(0, 500);
           logger.esError(endpoint, method, new Error(`${response.status} ${response.statusText}`));
-          throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+          throw new Error(`Request failed: ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ''}`);
         }
 
         logger.esRequest(endpoint, method, duration, response.status);
@@ -104,6 +106,30 @@ export class ElasticsearchClient {
       logger.esError(endpoint, method, error as Error);
       throw error;
     }
+  }
+
+  /**
+   * Server-side passthrough used by the ES proxy: sends the request with this
+   * client's credentials and TLS policy and returns the raw response (any status).
+   * `absoluteUrl` must already be validated to point at this client's cluster.
+   */
+  async rawRequest(method: string, absoluteUrl: string, body?: string, contentType = 'application/json') {
+    if (this.useApiProxy) throw new Error('rawRequest is server-side only');
+    const { 'Content-Type': _ct, ...headers } = this.headers;
+    return sslBypassFetch(absoluteUrl, {
+      method,
+      body,
+      headers: { ...headers, 'Content-Type': contentType },
+      verifyTls: this.verifyTls,
+    });
+  }
+
+  getBaseUrl() {
+    return this.baseUrl;
+  }
+
+  getVerifyTls() {
+    return this.verifyTls;
   }
 
   // Public method to get cluster info
@@ -430,9 +456,18 @@ export class ElasticsearchClient {
     return this.request('/_cat/indices?format=json&h=index,health,status,pri,rep,docs.count,store.size');
   }
 
-  async fetchRemoteTemplates() {
-    if (this.serverType === 'opensearch') return this.request('/_template');
-    return this.request('/_index_template');
+  /** Template name → definition. Composable templates first, legacy templates as fallback. */
+  async fetchRemoteTemplates(): Promise<Record<string, unknown>> {
+    const out: Record<string, unknown> = {};
+    try {
+      const composable = await this.request('/_index_template') as { index_templates?: { name: string; index_template: unknown }[] };
+      for (const t of composable.index_templates ?? []) out[t.name] = t.index_template;
+    } catch { /* older clusters: legacy only */ }
+    try {
+      const legacy = await this.request('/_template') as Record<string, unknown>;
+      for (const [name, t] of Object.entries(legacy)) if (!(name in out)) out[name] = t;
+    } catch { /* ignore */ }
+    return out;
   }
 
   async fetchRemoteSettings() {
@@ -440,14 +475,19 @@ export class ElasticsearchClient {
   }
 }
 
-// Singleton instance
+// Browser-side singleton: the proxy client for the current tab. It holds no
+// credentials (see request()). On the server it is deliberately disabled —
+// server code must use the per-user session store in cluster-session.ts so one
+// user's connection can never be used by another.
 let elasticsearchClient: ElasticsearchClient | null = null;
+const isServer = typeof window === 'undefined';
 
 export function getElasticsearchClient(): ElasticsearchClient | null {
-  return elasticsearchClient;
+  return isServer ? null : elasticsearchClient;
 }
 
 export function setElasticsearchClient(client: ElasticsearchClient) {
+  if (isServer) return;
   elasticsearchClient = client;
 }
 

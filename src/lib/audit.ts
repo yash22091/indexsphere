@@ -19,6 +19,8 @@ function getIp(req: NextRequest): string {
  * Write an audit log entry.  Safe to call from any API route handler.
  * Failures are swallowed so they never break primary functionality.
  */
+const MAX_AUDIT_BODY = 8 * 1024;
+
 export function writeAuditLog(
   req: NextRequest,
   action: string,
@@ -40,7 +42,10 @@ export function writeAuditLog(
       target: opts.target,
       method: req.method,
       endpoint: opts.endpoint ?? new URL(req.url).pathname,
-      request_body: opts.requestBody,
+      // Bodies can be huge (_bulk, INSERTs); keep enough to understand the action
+      request_body: opts.requestBody && opts.requestBody.length > MAX_AUDIT_BODY
+        ? `${opts.requestBody.slice(0, MAX_AUDIT_BODY)}… [truncated, ${opts.requestBody.length} chars]`
+        : opts.requestBody,
       status_code: opts.statusCode,
       duration_ms: opts.durationMs,
       ip_address: getIp(req),

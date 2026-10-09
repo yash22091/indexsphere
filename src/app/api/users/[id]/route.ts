@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase, hashPassword } from '@/lib/database';
+import { getDatabase, hashPassword } from '@/lib/database-sqlite';
 import { requireAdmin, getUserFromRequest } from '@/lib/auth';
 
 export async function DELETE(
@@ -15,6 +15,9 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    if (id === admin.id) {
+      return NextResponse.json({ error: 'You cannot delete your own account' }, { status: 400 });
+    }
     const db = getDatabase();
     const success = await db.deleteUser(id);
 
@@ -49,8 +52,20 @@ export async function PATCH(
       return NextResponse.json({ error: 'Admin permissions required to change roles' }, { status: 403 });
     }
 
-    if (newPassword && !isAdmin && !isSelfUpdate) {
-      return NextResponse.json({ error: 'You can only change your own password' }, { status: 403 });
+    if (role && !['admin', 'user', 'readonly'].includes(role)) {
+      return NextResponse.json({ error: 'role must be admin, user or readonly' }, { status: 400 });
+    }
+
+    // Non-admins must use /api/auth/change-password, which verifies the current password
+    if (newPassword && !isAdmin) {
+      return NextResponse.json(
+        { error: isSelfUpdate ? 'Use /api/auth/change-password to change your own password' : 'You can only change your own password' },
+        { status: 403 },
+      );
+    }
+
+    if (role && isSelfUpdate && role !== 'admin') {
+      return NextResponse.json({ error: 'Admins cannot demote themselves' }, { status: 400 });
     }
 
     const db = getDatabase();

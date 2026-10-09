@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { hashPassword } from '@/lib/database';
-import { getDatabase } from '@/lib/database';
-import { requireAdmin, getUserFromRequest } from '@/lib/auth';
+import { hashPassword } from '@/lib/database-sqlite';
+import { getDatabase } from '@/lib/database-sqlite';
+import { requireAdmin } from '@/lib/auth';
 import debugLog from '@/lib/debug';
 
 export async function GET(request: NextRequest) {
@@ -17,7 +17,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         initialized: users.length > 0,
         hasAdmin: users.some(u => u.role === 'admin'),
-        userCount: users.length,
       });
     }
 
@@ -62,11 +61,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (username.length < 3 || password.length < 6) {
+    if (username.length < 3 || password.length < 8) {
       return NextResponse.json(
-        { error: 'Username must be at least 3 characters and password at least 6 characters' },
+        { error: 'Username must be at least 3 characters and password at least 8 characters' },
         { status: 400 }
       );
+    }
+
+    if (!['admin', 'user', 'readonly'].includes(role)) {
+      return NextResponse.json({ error: 'role must be admin, user or readonly' }, { status: 400 });
     }
 
     const db = getDatabase();

@@ -18,8 +18,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Indexsphere - Elasticsearch Web Admin",
-  description: "Modern Elasticsearch cluster management and administration tool by Yash Patel",
+  title: { default: "IndexSphere", template: "%s · IndexSphere" },
+  description: "Operations console for Elasticsearch, OpenSearch and ClickHouse — by Yash Patel",
   icons: {
     icon: '/favicon.svg',
     shortcut: '/favicon.svg',

@@ -1,5 +1,6 @@
 # Multi-stage build for production optimization
-FROM node:18-alpine AS base
+# Node 22 LTS (Node 18 is end-of-life and no longer receives security fixes)
+FROM node:22-alpine AS base
 
 # ── deps: install ALL dependencies (including devDeps for native module compilation) ──
 FROM base AS deps
@@ -8,7 +9,11 @@ RUN apk add --no-cache libc6-compat python3 make g++ sqlite-dev
 
 WORKDIR /app
 COPY package.json package-lock.json* ./
-# Full install (devDeps needed for TS build + native addon compilation)
+# The image uses Alpine's Chromium for PDFs, so skip Puppeteer's ~170 MB Chrome download
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+# Compile native addons against the headers shipped in this image (no header download needed)
+ENV npm_config_nodedir=/usr/local
+# Full install (devDeps needed for TS build + native addon compilation: better-sqlite3, bcrypt)
 RUN npm ci && npm cache clean --force
 
 # ── builder: compile TypeScript / Next.js ────────────────────────────────────
@@ -49,6 +54,9 @@ RUN apk add --no-cache \
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV NODE_ENV=production
+# Cap the V8 heap: keeps memory predictable in containers (tested flat under sustained load).
+# Container needs ~1 GB total: Node (heap + ~150 MB) plus up to PDF_MAX_CONCURRENCY Chromium instances (~200 MB each)
+ENV NODE_OPTIONS=--max-old-space-size=384
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN addgroup --system --gid 1001 nodejs \

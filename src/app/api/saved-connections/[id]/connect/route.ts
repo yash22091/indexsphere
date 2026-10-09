@@ -1,38 +1,46 @@
 /**
- * POST /api/saved-connections/[id]/connect — activate a saved connection server-side
- * Decrypts stored credentials from SQLite and registers the ES client singleton.
+ * POST /api/saved-connections/[id]/connect — activate a saved connection for the calling user.
+ * Credentials are decrypted server-side and never sent to the browser.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
-import { getDatabase, decryptValue } from '@/lib/database-sqlite';
-import { ElasticsearchClient, setElasticsearchClient } from '@/lib/elasticsearch';
-import { ElasticsearchConnectionConfig } from '@/types';
+import { getDatabase } from '@/lib/database-sqlite';
+import {
+  clickHouseConfigFromSavedConnection, configFromSavedConnection, getSavedConnectionForUser,
+  openClickHouseClient, openClusterClient, setClickHouseSession, setClusterSession,
+} from '@/lib/cluster-session';
+import { writeAuditLog } from '@/lib/audit';
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
   const { id } = await params;
-  const conn = getDatabase().getSavedConnectionById(id);
-  if (!conn) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const conn = getSavedConnectionForUser(id, user, 'any');
+  if (conn instanceof NextResponse) return conn;
 
-  const plainPw = conn.password_enc ? decryptValue(conn.password_enc) : undefined;
-  const config: ElasticsearchConnectionConfig = {
-    url: conn.url,
-    type: 'elasticsearch',
-    ...(conn.username && plainPw ? { auth: { username: conn.username, password: plainPw } } : {}),
-  };
-
-  const client = new ElasticsearchClient(config, false);
-  try {
-    await client.detectServerType();
-    await client.getClusterHealth();
-  } catch (err: unknown) {
-    return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : 'Connection failed' });
+  if (conn.engine === 'clickhouse') {
+    try {
+      const { client, version } = await openClickHouseClient(clickHouseConfigFromSavedConnection(conn));
+      setClickHouseSession(user.id, client, version, conn.id);
+      getDatabase().updateSavedConnection(id, { last_connected: new Date().toISOString() });
+      writeAuditLog(request, 'clickhouse:connect', { target: `${conn.name} (${conn.url})`, statusCode: 200 });
+      return NextResponse.json({ ok: true, engine: 'clickhouse', version });
+    } catch (err: unknown) {
+      return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : 'Connection failed' }, { status: 502 });
+    }
   }
 
-  setElasticsearchClient(client);
-  getDatabase().updateSavedConnection(id, { last_connected: new Date().toISOString() });
+  let client;
+  try {
+    client = await openClusterClient(configFromSavedConnection(conn));
+  } catch (err: unknown) {
+    return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : 'Connection failed' }, { status: 502 });
+  }
 
-  return NextResponse.json({ ok: true });
+  setClusterSession(user.id, client, client.getBaseUrl(), conn.id);
+  getDatabase().updateSavedConnection(id, { last_connected: new Date().toISOString() });
+  writeAuditLog(request, 'cluster:connect', { target: `${conn.name} (${conn.url})`, statusCode: 200 });
+
+  return NextResponse.json({ ok: true, engine: client.getServerType(), serverType: client.getServerType() });
 }

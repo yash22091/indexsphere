@@ -11,29 +11,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import Link from "next/link";
 import { useConnection } from "@/contexts/connection-context";
+import { EmptyState, PageHeader, SeverityBadge } from "@/components/app";
 import { getElasticsearchClient } from "@/lib/elasticsearch";
-import { 
-  Trash2, 
-  AlertTriangle, 
-  Search, 
-  Shield, 
-  Play,
-  RefreshCw,
-  CheckCircle,
-  AlertCircle,
-  Database,
-  Loader2,
-  FileText,
-  Clock,
-  Activity,
-  Settings,
-  Eye,
-  Copy,
-  Save,
-  Download
-} from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle, Copy, Database, Download, Eye, Loader2, RefreshCw, Trash2 } from "lucide-react";
 
 interface DeleteOperation {
   id: string;
@@ -68,6 +50,7 @@ export default function DeleteByQueryPage() {
   const [waitForCompletion, setWaitForCompletion] = useState(true);
   const [slices, setSlices] = useState<string>("auto");
   const [scrollSize, setScrollSize] = useState<number>(1000);
+  const [confirmText, setConfirmText] = useState("");
   
   // Sample queries for common delete operations
   const sampleQueries = {
@@ -281,217 +264,154 @@ export default function DeleteByQueryPage() {
     }
   };
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
+  const confirmOk = confirmText.trim().toLowerCase() === "delete";
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center">
-            <Trash2 className="h-8 w-8 mr-3 text-red-500" />
-            Delete by Query
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            Safely delete documents matching specific criteria with preview and safeguards
-          </p>
-        </div>
-        <div className="flex space-x-2">
-          <Button 
-            onClick={loadIndices} 
-            variant="outline"
-            disabled={!isConnected}
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh Indices
+    <div className="space-y-6">
+      <PageHeader
+        title="Delete by query"
+        description="Delete the documents that match a query. Preview the matches first; deletions can't be undone."
+        actions={
+          <Button onClick={loadIndices} variant="outline" disabled={!isConnected}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh indices
           </Button>
-        </div>
-      </div>
+        }
+      />
 
-      {/* Connection Status */}
       {!isConnected && (
-        <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-400">
-          <Database className="h-4 w-4" />
-          <AlertDescription>
-            Not connected to cluster. Please connect first to use delete by query.
-          </AlertDescription>
-        </Alert>
+        <EmptyState
+          icon={Database}
+          title="No cluster connected"
+          description="Connect to an Elasticsearch or OpenSearch cluster to delete documents by query."
+          action={<Button asChild><Link href="/connections">Go to connections</Link></Button>}
+        />
       )}
 
-      {/* Error Alert */}
       {error && (
-        <Alert className="border-destructive/50 text-destructive">
+        <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* Warning Alert */}
-      <Alert className="border-orange-500/50 text-orange-700 dark:text-orange-400">
-        <AlertTriangle className="h-4 w-4" />
+      {isConnected && (
+      <>
+      <Alert>
+        <AlertTriangle className="h-4 w-4 text-warning" />
         <AlertDescription>
-          <strong>⚠️ CAUTION:</strong> Delete by query operations are irreversible. Always preview your query first and consider using dry-run mode.
-          Make sure you have proper backups before proceeding with destructive operations.
+          Deleted documents can&apos;t be recovered. Preview the query, keep dry run on until the matches look right, and make sure a recent snapshot exists.
         </AlertDescription>
       </Alert>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Query Builder */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="min-w-0 space-y-6 lg:col-span-2">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Search className="h-5 w-5" />
-                <span>Query Builder</span>
-              </CardTitle>
-              <CardDescription>
-                Build and test your delete query with safety controls
-              </CardDescription>
+              <CardTitle className="text-base">Query</CardTitle>
+              <CardDescription>Documents matching this query will be deleted.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Target Index</Label>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label>Target index</Label>
                   <Select value={selectedIndex} onValueChange={setSelectedIndex}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {indices.map((index) => (
-                        <SelectItem key={index} value={index}>
-                          {index}
-                        </SelectItem>
+                        <SelectItem key={index} value={index}>{index === "*" ? "All indices (*)" : index}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div className="space-y-2">
-                  <Label>Sample Queries</Label>
+                <div className="grid gap-2">
+                  <Label>Start from an example</Label>
                   <Select onValueChange={loadSampleQuery}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Load sample query" />
-                    </SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Choose an example" /></SelectTrigger>
                     <SelectContent>
-                      {Object.entries(sampleQueries).map(([name, query]) => (
-                        <SelectItem key={name} value={name}>
-                          {name}
-                        </SelectItem>
+                      {Object.keys(sampleQueries).map((name) => (
+                        <SelectItem key={name} value={name}>{name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label>Delete Query (JSON)</Label>
+              <div className="grid gap-2">
+                <Label htmlFor="dbq-query">Query DSL (JSON)</Label>
                 <Textarea
+                  id="dbq-query"
                   value={queryText}
                   onChange={(e) => setQueryText(e.target.value)}
                   rows={12}
-                  className="font-mono text-sm"
-                  placeholder="Enter your Elasticsearch query in JSON format..."
+                  className="font-mono text-xs"
+                  spellCheck={false}
                 />
-                <div className="flex space-x-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => copyToClipboard(queryText)}
-                  >
-                    <Copy className="h-4 w-4 mr-2" />
-                    Copy Query
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => copyToClipboard(queryText)}>
+                    <Copy className="mr-2 h-4 w-4" />Copy
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={downloadQuery}
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    Download
+                  <Button variant="outline" size="sm" onClick={downloadQuery}>
+                    <Download className="mr-2 h-4 w-4" />Download
                   </Button>
                 </div>
               </div>
 
-              <div className="flex space-x-2">
-                <Button 
-                  onClick={previewQuery} 
-                  disabled={!isConnected || previewLoading}
-                  variant="outline"
-                  className="flex-1"
-                >
-                  {previewLoading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Eye className="h-4 w-4 mr-2" />
-                  )}
-                  Preview Query
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button onClick={previewQuery} disabled={!isConnected || previewLoading} variant="outline" className="flex-1">
+                  {previewLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
+                  Preview matches
                 </Button>
-                <Button 
-                  onClick={() => setShowConfirmDialog(true)} 
-                  disabled={!isConnected || loading || !preview}
+                <Button
+                  onClick={() => { setConfirmText(""); setShowConfirmDialog(true); }}
+                  disabled={!isConnected || loading || !preview || dryRun}
+                  variant="destructive"
                   className="flex-1"
                 >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4 mr-2" />
-                  )}
-                  Execute Delete
+                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                  Delete matching documents
                 </Button>
               </div>
+              {(!preview || dryRun) && (
+                <p className="text-xs text-muted-foreground">
+                  {!preview ? "Preview the matches before deleting." : "Dry run is on — turn it off under Safety settings to enable deletion."}
+                </p>
+              )}
             </CardContent>
           </Card>
 
-          {/* Query Preview */}
           {preview && (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Eye className="h-5 w-5" />
-                  <span>Query Preview</span>
-                </CardTitle>
-                <CardDescription>
-                  Documents that will be affected by this delete operation
-                </CardDescription>
+                <CardTitle className="text-base">Preview</CardTitle>
+                <CardDescription>Documents that this operation would delete.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="text-center p-4 bg-muted rounded-lg">
-                    <div className="text-2xl font-bold text-red-600">{preview.totalMatches.toLocaleString()}</div>
-                    <div className="text-sm text-muted-foreground">Documents to Delete</div>
-                  </div>
-                  <div className="text-center p-4 bg-muted rounded-lg">
-                    <div className="text-2xl font-bold">{preview.indices.length}</div>
-                    <div className="text-sm text-muted-foreground">Affected Indices</div>
-                  </div>
-                  <div className="text-center p-4 bg-muted rounded-lg">
-                    <div className="text-2xl font-bold">{preview.sampleDocs.length}</div>
-                    <div className="text-sm text-muted-foreground">Sample Documents</div>
-                  </div>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    ["Matching documents", preview.totalMatches.toLocaleString(), preview.totalMatches > 0 ? "text-destructive" : ""],
+                    ["Indices affected", String(preview.indices.length), ""],
+                    ["Samples shown", String(preview.sampleDocs.length), ""],
+                  ].map(([label, value, cls]) => (
+                    <div key={label} className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">{label}</p>
+                      <p className={`mt-1 text-xl font-semibold tabular-nums ${cls}`}>{value}</p>
+                    </div>
+                  ))}
                 </div>
 
                 {preview.sampleDocs.length > 0 && (
-                  <div className="space-y-3">
-                    <h4 className="font-medium">Sample Documents:</h4>
-                    <div className="max-h-64 overflow-y-auto space-y-2">
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium">Sample documents</h4>
+                    <div className="max-h-72 space-y-2 overflow-y-auto">
                       {preview.sampleDocs.map((doc, index) => (
-                        <Card key={doc._id || `doc-${index}`} className="p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <Badge variant="outline">{doc._index}</Badge>
-                            <div className="text-xs text-muted-foreground">ID: {doc._id}</div>
+                        <div key={doc._id || `doc-${index}`} className="rounded-md border">
+                          <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+                            <Badge variant="outline" className="font-mono font-normal">{doc._index}</Badge>
+                            <span className="truncate font-mono text-xs text-muted-foreground">{doc._id}</span>
                           </div>
-                          <Textarea
-                            value={formatJSON(doc._source, 2)}
-                            rows={4}
-                            readOnly
-                            className="font-mono text-xs"
-                          />
-                        </Card>
+                          <pre className="max-h-40 overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed">{formatJSON(doc._source, 2)}</pre>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -501,116 +421,74 @@ export default function DeleteByQueryPage() {
           )}
         </div>
 
-        {/* Settings & History */}
         <div className="space-y-6">
-          {/* Advanced Settings */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Settings className="h-5 w-5" />
-                <span>Safety & Settings</span>
-              </CardTitle>
+              <CardTitle className="text-base">Safety settings</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-3">
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="dry-run"
-                    checked={dryRun}
-                    onCheckedChange={(checked) => setDryRun(!!checked)}
-                  />
-                  <Label htmlFor="dry-run" className="text-sm">
-                    Dry Run (Preview Only)
-                  </Label>
+              <div className="flex items-start gap-2">
+                <Checkbox id="dry-run" checked={dryRun} onCheckedChange={(checked) => setDryRun(!!checked)} />
+                <div className="grid gap-0.5">
+                  <Label htmlFor="dry-run">Dry run (preview only)</Label>
+                  <p className="text-xs text-muted-foreground">While on, deletion is disabled.</p>
                 </div>
-                
-                <div className="space-y-2">
-                  <Label>Conflict Handling</Label>
-                  <Select value={conflicts} onValueChange={(value: "abort" | "proceed") => setConflicts(value)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="abort">Abort on conflicts</SelectItem>
-                      <SelectItem value="proceed">Proceed with conflicts</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              </div>
 
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="wait-completion"
-                    checked={waitForCompletion}
-                    onCheckedChange={(checked) => setWaitForCompletion(!!checked)}
-                  />
-                  <Label htmlFor="wait-completion" className="text-sm">
-                    Wait for completion
-                  </Label>
-                </div>
+              <div className="grid gap-2">
+                <Label>On version conflict</Label>
+                <Select value={conflicts} onValueChange={(value: "abort" | "proceed") => setConflicts(value)}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="abort">Abort</SelectItem>
+                    <SelectItem value="proceed">Skip and continue</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-                <div className="space-y-2">
-                  <Label>Parallel Slices</Label>
-                  <Input
-                    value={slices}
-                    onChange={(e) => setSlices(e.target.value)}
-                    placeholder="auto"
-                  />
-                </div>
+              <div className="flex items-center gap-2">
+                <Checkbox id="wait-completion" checked={waitForCompletion} onCheckedChange={(checked) => setWaitForCompletion(!!checked)} />
+                <Label htmlFor="wait-completion">Wait for completion</Label>
+              </div>
 
-                <div className="space-y-2">
-                  <Label>Scroll Size</Label>
-                  <Input
-                    type="number"
-                    value={scrollSize}
-                    onChange={(e) => setScrollSize(parseInt(e.target.value) || 1000)}
-                    min={100}
-                    max={10000}
-                  />
-                </div>
+              <div className="grid gap-2">
+                <Label htmlFor="dbq-slices">Parallel slices</Label>
+                <Input id="dbq-slices" value={slices} onChange={(e) => setSlices(e.target.value)} placeholder="auto" />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="dbq-scroll">Batch size</Label>
+                <Input
+                  id="dbq-scroll"
+                  type="number"
+                  value={scrollSize}
+                  onChange={(e) => setScrollSize(parseInt(e.target.value) || 1000)}
+                  min={100}
+                  max={10000}
+                />
               </div>
             </CardContent>
           </Card>
 
-          {/* Operation History */}
           {history.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Clock className="h-5 w-5" />
-                  <span>Recent Operations</span>
-                </CardTitle>
+                <CardTitle className="text-base">Recent operations</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="max-h-64 overflow-y-auto space-y-2">
+              <CardContent>
+                <div className="max-h-64 space-y-2 overflow-y-auto">
                   {history.map((operation) => (
-                    <div 
-                      key={operation.id}
-                      className="p-3 border rounded-lg space-y-2"
-                    >
+                    <div key={operation.id} className="space-y-1.5 rounded-md border p-3">
                       <div className="flex items-center justify-between">
-                        <Badge 
-                          variant={operation.status === 'success' ? 'default' : 'destructive'}
-                          className="text-xs"
-                        >
-                          {operation.status === 'success' ? (
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                          ) : (
-                            <AlertCircle className="h-3 w-3 mr-1" />
-                          )}
+                        <SeverityBadge level={operation.status === 'success' ? 'ok' : 'high'}>
+                          {operation.status === 'success' ? <CheckCircle className="mr-1 h-3 w-3" /> : <AlertCircle className="mr-1 h-3 w-3" />}
                           {operation.status}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {operation.timestamp.toLocaleTimeString()}
-                        </span>
+                        </SeverityBadge>
+                        <span className="text-xs text-muted-foreground">{operation.timestamp.toLocaleTimeString()}</span>
                       </div>
                       <div className="text-sm">
-                        <div className="font-medium">{operation.index}</div>
-                        <div className="text-muted-foreground">
-                          Deleted: {operation.deleted.toLocaleString()} docs
-                        </div>
-                        <div className="text-muted-foreground">
-                          Duration: {operation.duration}ms
-                        </div>
+                        <div className="truncate font-mono text-xs font-medium">{operation.index}</div>
+                        <div className="text-muted-foreground tabular-nums">{operation.deleted.toLocaleString()} deleted · {operation.duration} ms</div>
                       </div>
                     </div>
                   ))}
@@ -620,54 +498,41 @@ export default function DeleteByQueryPage() {
           )}
         </div>
       </div>
+      </>
+      )}
 
-      {/* Confirmation Dialog */}
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="flex items-center space-x-2">
-              <AlertTriangle className="h-5 w-5 text-red-500" />
-              <span>Confirm Delete Operation</span>
-            </DialogTitle>
-            <DialogDescription>
-              This action cannot be undone. Please review the details carefully.
-            </DialogDescription>
+            <DialogTitle>Delete {preview?.totalMatches.toLocaleString() ?? "the matching"} documents?</DialogTitle>
+            <DialogDescription>This can&apos;t be undone.</DialogDescription>
           </DialogHeader>
-          
+
           <div className="space-y-4">
-            <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900 rounded-lg">
-              <div className="text-sm space-y-2">
-                <div><strong>Target Index:</strong> {selectedIndex}</div>
-                <div><strong>Documents to Delete:</strong> {preview?.totalMatches.toLocaleString() || 'Unknown'}</div>
-                <div><strong>Affected Indices:</strong> {preview?.indices.join(', ') || 'Unknown'}</div>
-                <div><strong>Conflict Handling:</strong> {conflicts}</div>
-              </div>
+            <dl className="divide-y rounded-md border text-sm">
+              {[
+                ["Target", selectedIndex === "*" ? "All indices (*)" : selectedIndex],
+                ["Matching documents", preview?.totalMatches.toLocaleString() || "Unknown"],
+                ["Indices affected", preview?.indices.join(", ") || "Unknown"],
+                ["On conflict", conflicts === "abort" ? "Abort" : "Skip and continue"],
+              ].map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-4 px-3 py-2">
+                  <dt className="text-muted-foreground">{k}</dt>
+                  <dd className="break-all text-right font-mono text-xs">{v}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="grid gap-2">
+              <Label htmlFor="dbq-confirm">Type <span className="font-mono">delete</span> to confirm</Label>
+              <Input id="dbq-confirm" value={confirmText} onChange={e => setConfirmText(e.target.value)} autoComplete="off" />
             </div>
-            
-            <Alert className="border-red-500/50 text-red-700 dark:text-red-400">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                <strong>WARNING:</strong> This will permanently delete {preview?.totalMatches.toLocaleString() || 'unknown number of'} documents. 
-                Make sure you have proper backups and have tested your query thoroughly.
-              </AlertDescription>
-            </Alert>
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowConfirmDialog(false)}>
-              Cancel
-            </Button>
-            <Button 
-              onClick={executeDeleteByQuery}
-              className="bg-red-600 hover:bg-red-700"
-              disabled={loading}
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4 mr-2" />
-              )}
-              Confirm Delete
+            <Button variant="outline" onClick={() => setShowConfirmDialog(false)}>Cancel</Button>
+            <Button onClick={executeDeleteByQuery} variant="destructive" disabled={loading || !confirmOk}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Delete documents
             </Button>
           </DialogFooter>
         </DialogContent>

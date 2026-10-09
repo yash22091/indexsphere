@@ -6,6 +6,7 @@
  */
 import { getDatabase, AlertRule, AlertTrigger } from './database-sqlite';
 import { sendEmail } from './mailer';
+import { assertSafeOutboundUrl, parseOutboundUrl } from './url-guard';
 
 export interface ClusterMetrics {
   cpu_percent: number;
@@ -27,6 +28,27 @@ interface NotificationChannel {
   url?: string;
 }
 
+/**
+ * Validate notification channels submitted by an admin. Returns an error
+ * message, or null when every channel is acceptable.
+ */
+export function validateChannels(channels: unknown): string | null {
+  if (channels === undefined) return null;
+  if (!Array.isArray(channels)) return 'channels must be an array';
+  for (const ch of channels as NotificationChannel[]) {
+    if (!ch || !['email', 'slack', 'webhook'].includes(ch.type)) return 'channel type must be email|slack|webhook';
+    if (ch.type === 'email' && (typeof ch.to !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(ch.to))) return 'email channel needs a valid "to" address';
+    if (ch.type !== 'email') {
+      try {
+        parseOutboundUrl(ch.url);
+      } catch (err) {
+        return `${ch.type} URL rejected: ${err instanceof Error ? err.message : 'invalid'}`;
+      }
+    }
+  }
+  return null;
+}
+
 function evaluate(rule: AlertRule, value: number): boolean {
   switch (rule.operator) {
     case 'gt':  return value > rule.threshold;
@@ -37,8 +59,12 @@ function evaluate(rule: AlertRule, value: number): boolean {
   }
 }
 
-function metricValue(metrics: ClusterMetrics, metric: string): number {
-  return (metrics as unknown as Record<string, number>)[metric] ?? 0;
+/** Metric snapshot from either source: search-cluster (ClusterMetrics) or ClickHouse (ch_* keys). */
+export type MetricSnapshot = ClusterMetrics | Record<string, number>;
+
+function metricValue(metrics: MetricSnapshot, metric: string): number | undefined {
+  const v = (metrics as unknown as Record<string, unknown>)[metric];
+  return typeof v === 'number' ? v : undefined;
 }
 
 async function sendNotifications(
@@ -57,11 +83,13 @@ async function sendNotifications(
         const payload = ch.type === 'slack'
           ? { text: `*${subject}*\n${body}` }
           : { alert: rule.name, metric: rule.metric, value, threshold: rule.threshold, severity: rule.severity, timestamp: new Date().toISOString() };
-        await fetch(ch.url, {
+        const target = await assertSafeOutboundUrl(ch.url);
+        await fetch(target, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(5000),
+          redirect: 'error',
         });
       }
     } catch (err) {
@@ -74,14 +102,16 @@ async function sendNotifications(
  * Evaluate all active alert rules against the provided metrics snapshot.
  * Returns the list of new triggers that were recorded.
  */
-export async function evaluateAlerts(metrics: ClusterMetrics): Promise<AlertTrigger[]> {
+export async function evaluateAlerts(metrics: MetricSnapshot, connectionId?: string): Promise<AlertTrigger[]> {
   const db = getDatabase();
-  const rules = db.getAlertRules().filter(r => r.is_active);
+  // Rules bound to a saved connection only fire for metrics from that cluster
+  const rules = db.getAlertRules().filter(r => r.is_active && (!r.connection_id || r.connection_id === connectionId));
   const newTriggers: AlertTrigger[] = [];
 
   for (const rule of rules) {
+    // Only evaluate rules whose metric this snapshot actually carries (ES vs ClickHouse)
     const value = metricValue(metrics, rule.metric);
-    if (!evaluate(rule, value)) continue;
+    if (value === undefined || !evaluate(rule, value)) continue;
 
     // De-duplicate: don't fire again within window_minutes
     const lastFired = rule.last_triggered ? new Date(rule.last_triggered).getTime() : 0;

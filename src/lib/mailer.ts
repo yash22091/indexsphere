@@ -4,6 +4,8 @@
  * smtp_pass, smtp_from) with env-var fallbacks.
  */
 import nodemailer from 'nodemailer';
+
+type TransportOptions = Parameters<typeof nodemailer.createTransport>[0];
 import { getDatabase } from './database-sqlite';
 
 export interface MailOptions {
@@ -33,12 +35,12 @@ function getSmtpConfig() {
 export async function sendEmail(opts: MailOptions): Promise<{ ok: boolean; error?: string }> {
   const cfg = getSmtpConfig();
 
-  const transporterOpts: nodemailer.TransportOptions = {
+  const transporterOpts: TransportOptions = {
     host: cfg.host,
     port: cfg.port,
     secure: cfg.secure,
     ...(cfg.user ? { auth: { user: cfg.user, pass: cfg.pass } } : {}),
-  } as nodemailer.TransportOptions;
+  } as TransportOptions;
 
   const transporter = nodemailer.createTransport(transporterOpts);
 
@@ -62,12 +64,12 @@ export async function sendEmail(opts: MailOptions): Promise<{ ok: boolean; error
 /** Verify SMTP connectivity; returns {ok, error?} */
 export async function testSmtpConnection(): Promise<{ ok: boolean; error?: string }> {
   const cfg = getSmtpConfig();
-  const transporterOpts: nodemailer.TransportOptions = {
+  const transporterOpts: TransportOptions = {
     host: cfg.host,
     port: cfg.port,
     secure: cfg.secure,
     ...(cfg.user ? { auth: { user: cfg.user, pass: cfg.pass } } : {}),
-  } as nodemailer.TransportOptions;
+  } as TransportOptions;
   const transporter = nodemailer.createTransport(transporterOpts);
   try {
     await transporter.verify();

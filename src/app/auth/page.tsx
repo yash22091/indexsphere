@@ -1,170 +1,117 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { BRAND } from "@/constants/brand";
-import { ThemeToggle } from "@/components/atoms/theme-toggle";
-import { 
-  Shield, 
-  AlertCircle, 
-  CheckCircle2,
-  UserCheck
-} from "lucide-react";
+import { BrandMark, BrandName } from "@/components/app";
 
-function AuthPageContent() {
+const HIGHLIGHTS = [
+  { title: "Elasticsearch, OpenSearch and ClickHouse", body: "One console for search clusters and analytical databases." },
+  { title: "Advisors that explain the fix", body: "Index and table grading with the exact command to run." },
+  { title: "Security built in", body: "Per-user sessions, role-based access, audit trail and CVE checks for the versions you run." },
+];
+
+function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login } = useAuth();
-  
-  const redirectPath = searchParams.get("redirect") || "/connect";
+  // Only same-origin paths are accepted as a redirect target
+  const requested = searchParams.get("redirect");
+  const redirectPath = requested && requested.startsWith("/") && !requested.startsWith("//") ? requested : "/overview";
+
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
-  // Basic Auth Form State
-  const [basicAuth, setBasicAuth] = useState({
-    username: "",
-    password: "",
-    remember: false
-  });
-
-  const handleBasicLogin = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
-    
     try {
-      await login({
-        username: basicAuth.username,
-        password: basicAuth.password,
-        authMethod: "basic"
-      });
-      
-      setSuccess("Authentication successful! Redirecting...");
-      setTimeout(() => {
-        router.push(redirectPath);
-      }, 1000);
+      await login({ username, password, authMethod: "basic" });
+      router.push(redirectPath);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed");
-    } finally {
+      setError(err instanceof Error ? err.message : "Sign-in failed");
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950 flex items-center justify-center p-4">
-      {/* Theme Toggle - Top Right Corner */}
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
+    <form onSubmit={submit} className="grid gap-5">
+      <div className="grid gap-1.5">
+        <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
+        <p className="text-sm text-muted-foreground">Enter your IndexSphere account details.</p>
       </div>
-
-      {/* Main Content - Centered */}
-      <div className="w-full max-w-sm space-y-3">{/* Reduced max-w and spacing */}
-        {/* Welcome Card */}
-        <Card className="text-center border-slate-200 dark:border-slate-800">
-          <CardHeader className="pb-2">{/* Reduced pb from 3 to 2 */}
-            <div className="mx-auto w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center mb-2">{/* Reduced size and margin */}
-              <Shield className="h-4 w-4 text-white" />{/* Reduced icon size */}
-            </div>
-            <CardTitle className="text-base">{BRAND.name}</CardTitle>{/* Reduced text size */}
-            <CardDescription className="text-sm">
-              Please authenticate to access your Elasticsearch clusters
-            </CardDescription>
-          </CardHeader>
-        </Card>
-
-        {/* Authentication Card */}
-        <Card className="border-slate-200 dark:border-slate-800">
-          <CardContent className="pt-4 pb-4">
-            {/* Error/Success Messages */}
-            {error && (
-              <Alert className="mb-3 border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20">
-                <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
-                <AlertDescription className="text-red-700 dark:text-red-300">
-                  {error}
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {success && (
-              <Alert className="mb-3 border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/20">
-                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                <AlertDescription className="text-green-700 dark:text-green-300">
-                  {success}
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {/* Authentication Form */}
-            <form onSubmit={handleBasicLogin} className="space-y-3">
-              <div className="space-y-1">
-                <Label htmlFor="basic-username" className="text-sm">Username</Label>
-                <Input
-                  id="basic-username"
-                  type="text"
-                  placeholder="Enter your username"
-                  value={basicAuth.username}
-                  onChange={(e) => setBasicAuth({...basicAuth, username: e.target.value})}
-                  required
-                  disabled={loading}
-                  className="h-9"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="basic-password" className="text-sm">Password</Label>
-                <Input
-                  id="basic-password"
-                  type="password"
-                  placeholder="Enter your password"
-                  value={basicAuth.password}
-                  onChange={(e) => setBasicAuth({...basicAuth, password: e.target.value})}
-                  required
-                  disabled={loading}
-                  className="h-9"
-                />
-              </div>
-              <Button 
-                type="submit" 
-                className="w-full h-9" 
-                disabled={loading}
-              >
-                {loading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    Authenticating...
-                  </>
-                ) : (
-                  <>
-                    <UserCheck className="h-4 w-4 mr-2" />
-                    Sign In
-                  </>
-                )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      <div className="grid gap-2">
+        <Label htmlFor="username">Username</Label>
+        <Input id="username" autoComplete="username" autoFocus required value={username}
+          onChange={e => setUsername(e.target.value)} disabled={loading} />
       </div>
-    </div>
+      <div className="grid gap-2">
+        <Label htmlFor="password">Password</Label>
+        <Input id="password" type="password" autoComplete="current-password" required value={password}
+          onChange={e => setPassword(e.target.value)} disabled={loading} />
+      </div>
+      <Button type="submit" className="w-full" disabled={loading || !username || !password}>
+        {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+        Sign in
+      </Button>
+      <p className="text-xs text-muted-foreground">
+        Forgot your password? Ask an IndexSphere administrator to reset it under Users.
+      </p>
+    </form>
   );
 }
 
 export default function AuthPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
-        <div className="text-center">
-          <Shield className="h-8 w-8 mx-auto mb-4 text-blue-600" />
-          <p>Loading authentication...</p>
+    <div className="grid min-h-svh lg:grid-cols-2">
+      <div className="flex flex-col gap-4 p-6 md:p-10">
+        <div className="flex items-center gap-2.5">
+          <BrandMark className="h-7 w-7" />
+          <BrandName />
+        </div>
+        <div className="flex flex-1 items-center justify-center">
+          <div className="w-full max-w-sm">
+            <Suspense fallback={<div className="flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}>
+              <SignInForm />
+            </Suspense>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">Operations console for Elasticsearch, OpenSearch and ClickHouse.</p>
+      </div>
+
+      <div className="relative hidden border-l bg-muted/40 lg:flex lg:flex-col lg:justify-center lg:p-16">
+        <div className="max-w-md space-y-8">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-muted-foreground">IndexSphere</p>
+            <h2 className="text-3xl font-semibold tracking-tight">Run your data platform with confidence.</h2>
+          </div>
+          <ul className="space-y-6">
+            {HIGHLIGHTS.map(h => (
+              <li key={h.title} className="flex gap-3">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground" aria-hidden />
+                <div>
+                  <p className="text-sm font-medium">{h.title}</p>
+                  <p className="text-sm text-muted-foreground">{h.body}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
-    }>
-      <AuthPageContent />
-    </Suspense>
+    </div>
   );
 }

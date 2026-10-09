@@ -1,32 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import jwt from 'jsonwebtoken';
-import { getConfig } from '@/lib/config';
-import { getDatabase } from '@/lib/database';
-import { getElasticsearchClient } from '@/lib/elasticsearch';
-import { Client } from '@elastic/elasticsearch';
+import { getUserFromRequest } from '@/lib/auth';
+import { ElasticsearchClient } from '@/lib/elasticsearch';
+import {
+  configFromSavedConnection, getClusterSession, getSavedConnectionForUser, openClusterClient,
+} from '@/lib/cluster-session';
 import debugLog from '@/lib/debug';
 
-// ✅ Verify JWT token for admin
-async function verifyAdmin(request: NextRequest) {
-  const config = getConfig();
-
-  const cookieToken = request.cookies.get('auth-token')?.value;
-  const headerAuth = request.headers.get('authorization');
-  const bearerToken = headerAuth?.startsWith('Bearer ')
-    ? headerAuth.replace('Bearer ', '')
-    : headerAuth;
-
-  const token = cookieToken || bearerToken;
-
-  if (!token) {
-    throw new Error('No authentication token');
-  }
-
-  try {
-    return jwt.verify(token, config.security.jwtSecret) as any;
-  } catch {
-    throw new Error('Invalid authentication token');
-  }
+/** Adapts our client to the small subset of the official client API the collectors use. */
+function adapt(client: ElasticsearchClient) {
+  return {
+    cluster: {
+      health: () => client.getClusterHealth(),
+      stats: () => client.request('/_cluster/stats'),
+    },
+    nodes: { stats: () => client.request('/_nodes/stats') },
+    indices: { stats: () => client.request('/_stats') },
+  };
 }
 
 // ✅ Cluster health
@@ -157,94 +146,31 @@ export async function POST(request: NextRequest) {
   debugLog.api.request('POST', '/api/reports/cluster-report');
 
   try {
-    const user = await verifyAdmin(request);
-    const { connectionId, useActiveConnection, connectionConfig } = await request.json();
+    const user = getUserFromRequest(request);
+    if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+
+    // Cluster is resolved server-side only: the caller's active session, or a
+    // saved connection their role may use. Browser-supplied hosts are not accepted.
+    const { connectionId, useActiveConnection } = await request.json();
 
     let esClient;
     let connectionInfo;
 
-    // ✅ 1. Prefer frontend-provided connectionConfig
-    if (connectionConfig) {
-      esClient = new Client({
-        node: `${connectionConfig.protocol}://${connectionConfig.host}:${connectionConfig.port || '9200'}`,
-        auth: connectionConfig.username && connectionConfig.password ? {
-          username: connectionConfig.username,
-          password: connectionConfig.password
-        } : undefined,
-        tls: { rejectUnauthorized: !connectionConfig.ignoreCertErrors }
-      });
-
-      connectionInfo = {
-        name:
-          connectionConfig.name ||
-          `${connectionConfig.protocol}://${connectionConfig.host}:${connectionConfig.port || '9200'}`
-      };
-
-      // ✅ FIXED: use success instead of info
-      debugLog.api.response(200, 'Using frontend-provided connectionConfig for report generation', {
-        host: connectionConfig.host,
-        port: connectionConfig.port || '9200'
-      });
-
-    // ✅ 2. Fallback to active connection
-    } else if (useActiveConnection) {
-      esClient = getElasticsearchClient();
-      if (!esClient) {
+    if (useActiveConnection || !connectionId || connectionId === 'active' || connectionId === 'current') {
+      const session = getClusterSession(user.id);
+      if (!session) {
         return NextResponse.json(
           { error: 'No active connection found. Please connect to a cluster first.' },
           { status: 400 }
         );
       }
-      connectionInfo = {
-        name:
-          (esClient as any).config?.name ||
-          (esClient as any).config?.url ||
-          'Active Connection'
-      };
-
-    // ✅ 3. Otherwise, use saved connection by ID
+      esClient = adapt(session.client);
+      connectionInfo = { name: session.url };
     } else {
-      if (!connectionId) {
-        return NextResponse.json(
-          { error: 'Connection ID is required' },
-          { status: 400 }
-        );
-      }
-
-      const db = getDatabase();
-      const connection = await db.getConnectionById(connectionId);
-
-      if (!connection) {
-        return NextResponse.json(
-          { error: 'Connection not found' },
-          { status: 404 }
-        );
-      }
-
-      // Parse URL into parts for the @elastic/elasticsearch Client constructor
-      const parsedUrl = new URL(connection.url);
-      const protocol = parsedUrl.protocol.replace(':', '');
-      const host = parsedUrl.hostname;
-      const port = parsedUrl.port || (protocol === 'https' ? '443' : '9200');
-
-      esClient = new Client({
-        node: connection.url,
-        auth:
-          connection.username && connection.password
-            ? {
-                username: connection.username,
-                password: connection.password
-              }
-            : undefined,
-        tls: {
-          // On-prem always uses self-signed certs
-          rejectUnauthorized: false
-        }
-      });
-
-      connectionInfo = {
-        name: connection.name || `${protocol}://${host}:${port}`
-      };
+      const conn = getSavedConnectionForUser(String(connectionId), user);
+      if (conn instanceof NextResponse) return conn;
+      esClient = adapt(await openClusterClient(configFromSavedConnection(conn)));
+      connectionInfo = { name: conn.name };
     }
 
     debugLog.debug('api', 'Collecting cluster data for report', {

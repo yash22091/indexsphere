@@ -36,8 +36,6 @@ tsconfig.tsbuildinfo
 ehthumbs.db
 Thumbs.db
 
-# Docker
-.dockerignore
 
 # Logs
 logs
@@ -95,3 +93,7 @@ certs/*.pem
 certs/*.key
 certs/*.crt
 certs/*.cert
+
+# Local SQLite database (users, encrypted connection passwords)
+data/*.db
+data/*.db-*

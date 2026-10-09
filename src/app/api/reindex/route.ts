@@ -3,16 +3,13 @@
  * GET  /api/reindex?task=... — poll task status
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromRequest } from '@/lib/auth';
-import { getElasticsearchClient } from '@/lib/elasticsearch';
+import { requireClusterAccess } from '@/lib/cluster-session';
 import { writeAuditLog } from '@/lib/audit';
 
 export async function POST(request: NextRequest) {
-  const user = getUserFromRequest(request);
-  if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-
-  const client = getElasticsearchClient();
-  if (!client) return NextResponse.json({ error: 'No cluster connected' }, { status: 400 });
+  const ctx = requireClusterAccess(request, 'POST', '/_reindex');
+  if (ctx instanceof NextResponse) return ctx;
+  const client = ctx.session.client;
 
   const body = await request.json();
   const { source_index, dest_index, query, pipeline, conflicts } = body;
@@ -40,17 +37,15 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  const user = getUserFromRequest(request);
-  if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-
-  const client = getElasticsearchClient();
-  if (!client) return NextResponse.json({ error: 'No cluster connected' }, { status: 400 });
+  const ctx = requireClusterAccess(request, 'GET', '/_tasks');
+  if (ctx instanceof NextResponse) return ctx;
+  const client = ctx.session.client;
 
   const { searchParams } = new URL(request.url);
   const taskId = searchParams.get('task');
 
-  if (!taskId) {
-    return NextResponse.json({ error: 'task parameter required' }, { status: 400 });
+  if (!taskId || !/^[\w.-]+:\d+$/.test(taskId)) {
+    return NextResponse.json({ error: 'valid task parameter required (node:id)' }, { status: 400 });
   }
 
   try {
@@ -62,15 +57,15 @@ export async function GET(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const user = getUserFromRequest(request);
-  if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-
-  const client = getElasticsearchClient();
-  if (!client) return NextResponse.json({ error: 'No cluster connected' }, { status: 400 });
+  const ctx = requireClusterAccess(request, 'POST', '/_tasks/_cancel');
+  if (ctx instanceof NextResponse) return ctx;
+  const client = ctx.session.client;
 
   const { searchParams } = new URL(request.url);
   const taskId = searchParams.get('task');
-  if (!taskId) return NextResponse.json({ error: 'task parameter required' }, { status: 400 });
+  if (!taskId || !/^[\w.-]+:\d+$/.test(taskId)) {
+    return NextResponse.json({ error: 'valid task parameter required (node:id)' }, { status: 400 });
+  }
 
   try {
     await client.cancelTask(taskId);

@@ -1,33 +1,26 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { VulnerabilityBanner } from "@/components/security/vulnerability-banner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { EmptyState, HealthBadge, PageHeader, StatCard, StatGrid } from "@/components/app";
 import { useConnection } from "@/contexts/connection-context";
 import { getElasticsearchClient } from "@/lib/elasticsearch";
 import { useRouter } from "next/navigation";
-import { 
-  RefreshCw, 
-  Activity, 
-  CheckCircle, 
-  Server, 
-  Database, 
-  FileText,
-  Zap,
-  Plus,
-  Search,
-  Settings,
-  Download,
-  BarChart3,
-  TrendingUp,
-  Clock,
+import {
+  Activity,
+  AlertCircle,
   AlertTriangle,
+  CheckCircle,
+  Database,
+  Download,
+  Layers,
   Loader2,
-  AlertCircle
+  RefreshCw,
+  Server,
 } from "lucide-react";
 
 interface ClusterHealth {
@@ -85,7 +78,10 @@ export default function OverviewPage() {
   const [autoRefresh, setAutoRefresh] = useState(false);
 
   // Load cluster data
-  const loadClusterData = async () => {
+  const loadingRef = useRef(false);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
+
+  const loadClusterData = useCallback(async () => {
     if (!isConnected) {
       setError("Not connected to cluster");
       return;
@@ -114,7 +110,7 @@ export default function OverviewPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isConnected]);
 
   // Load data on mount and when connection changes
   useEffect(() => {
@@ -124,28 +120,16 @@ export default function OverviewPage() {
       setClusterHealth(null);
       setClusterStats(null);
     }
-  }, [isConnected]);
+  }, [isConnected, loadClusterData]);
 
   // Auto-refresh functionality
   useEffect(() => {
     if (autoRefresh && isConnected) {
-      const interval = setInterval(loadClusterData, 30000); // Refresh every 30 seconds
+      // Refresh every 30 seconds; skip a tick while the previous refresh is still running
+      const interval = setInterval(() => { if (!loadingRef.current) loadClusterData(); }, 30000);
       return () => clearInterval(interval);
     }
-  }, [autoRefresh, isConnected]);
-
-  const getHealthIcon = (status: string) => {
-    switch (status) {
-      case "green":
-        return <CheckCircle className="h-5 w-5 text-green-600" />;
-      case "yellow":
-        return <AlertTriangle className="h-5 w-5 text-yellow-600" />;
-      case "red":
-        return <AlertCircle className="h-5 w-5 text-red-600" />;
-      default:
-        return <Clock className="h-5 w-5 text-gray-600" />;
-    }
-  };
+  }, [autoRefresh, isConnected, loadClusterData]);
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return "0 B";
@@ -159,360 +143,233 @@ export default function OverviewPage() {
     return num.toLocaleString();
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold flex items-center">
-            <Activity className="h-6 w-6 sm:h-8 sm:w-8 mr-2 sm:mr-3" />
-            Cluster Overview
-          </h1>
-          <p className="text-muted-foreground mt-1 sm:mt-2 text-sm sm:text-base">
-            {clusterHealth ? `Monitor your ${clusterHealth.cluster_name} cluster health and performance` : "Monitor your cluster health and performance"}
-          </p>
-        </div>
-        <div className="flex space-x-2">
-          <Button
-            variant={autoRefresh ? "default" : "outline"}
-            size="sm"
-            onClick={() => setAutoRefresh(!autoRefresh)}
-          >
-            <Activity className="h-4 w-4 mr-2" />
-            Auto Refresh
-          </Button>
-          <Button 
-            onClick={loadClusterData} 
-            variant="outline"
-            disabled={!isConnected || loading}
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Refresh
-          </Button>
-          <Button 
-            onClick={() => router.push('/reports')} 
-            variant="outline"
-            disabled={!isConnected}
-            className="hidden sm:flex"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export Report
-          </Button>
-        </div>
-      </div>
+  // Simple, factual checks derived from health + stats (details on Cluster analysis)
+  const checks = clusterHealth ? [
+    {
+      label: "Cluster status",
+      ok: clusterHealth.status === "green",
+      warn: clusterHealth.status === "yellow",
+      detail: clusterHealth.status === "green" ? "All shards allocated" : clusterHealth.status === "yellow" ? "Some replica shards are unassigned" : "Some primary shards are unassigned",
+    },
+    {
+      label: "Unassigned shards",
+      ok: clusterHealth.unassigned_shards === 0,
+      warn: false,
+      detail: clusterHealth.unassigned_shards === 0 ? "None" : `${formatNumber(clusterHealth.unassigned_shards)} shards need allocation`,
+    },
+    {
+      label: "Node redundancy",
+      ok: clusterHealth.number_of_nodes >= 3,
+      warn: clusterHealth.number_of_nodes < 3,
+      detail: clusterHealth.number_of_nodes >= 3 ? `${clusterHealth.number_of_nodes} nodes` : `${clusterHealth.number_of_nodes} node(s) — 3 or more recommended for high availability`,
+    },
+    {
+      label: "Pending cluster tasks",
+      ok: clusterHealth.number_of_pending_tasks === 0,
+      warn: clusterHealth.number_of_pending_tasks > 0,
+      detail: clusterHealth.number_of_pending_tasks === 0 ? "Queue empty" : `${clusterHealth.number_of_pending_tasks} waiting`,
+    },
+  ] : [];
 
-      {/* Connection Status & Error Messages */}
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Overview"
+        description={clusterHealth ? `Health and capacity of ${clusterHealth.cluster_name}.` : "Health and capacity of the connected cluster."}
+        meta={clusterHealth ? <HealthBadge status={clusterHealth.status} /> : undefined}
+        actions={
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              disabled={!isConnected}
+              aria-pressed={autoRefresh}
+            >
+              <Activity className="h-4 w-4 mr-2" />
+              {autoRefresh ? "Auto-refresh on" : "Auto-refresh off"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push('/reports')}
+              disabled={!isConnected}
+              className="hidden sm:inline-flex"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export report
+            </Button>
+            <Button size="sm" onClick={loadClusterData} disabled={!isConnected || loading}>
+              {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Refresh
+            </Button>
+          </>
+        }
+      />
+
+      {isConnected && <VulnerabilityBanner target="search" />}
+
       {!isConnected && (
-        <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-400">
-          <Database className="h-4 w-4" />
-          <AlertDescription>
-            Not connected to cluster. Please connect first to view cluster overview.
-          </AlertDescription>
-        </Alert>
+        <EmptyState
+          icon={Database}
+          title="No cluster connected"
+          description="Connect to an Elasticsearch or OpenSearch cluster to see its health and capacity."
+          action={<Button size="sm" onClick={() => router.push('/connections')}>Go to connections</Button>}
+        />
       )}
 
-      {error && (
-        <Alert className="border-destructive/50 text-destructive">
+      {error && isConnected && (
+        <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* Cluster Health Status */}
       {clusterHealth && (
+        <StatGrid>
+          <StatCard
+            label="Active shards"
+            icon={Layers}
+            value={formatNumber(clusterHealth.active_shards)}
+            hint={`${clusterHealth.active_shards_percent_as_number}% of all shards active`}
+            tone={clusterHealth.active_shards_percent_as_number < 100 ? "warning" : "default"}
+          />
+          <StatCard label="Primary shards" icon={Layers} value={formatNumber(clusterHealth.active_primary_shards)} />
+          <StatCard
+            label="Nodes"
+            icon={Server}
+            value={formatNumber(clusterHealth.number_of_nodes)}
+            hint={`${clusterHealth.number_of_data_nodes} data nodes`}
+          />
+          <StatCard
+            label="Unassigned shards"
+            icon={AlertTriangle}
+            value={formatNumber(clusterHealth.unassigned_shards)}
+            tone={clusterHealth.unassigned_shards > 0 ? "danger" : "default"}
+            hint={clusterHealth.unassigned_shards > 0 ? "See Shards for allocation details" : "All shards allocated"}
+          />
+        </StatGrid>
+      )}
+
+      {clusterHealth && (clusterHealth.relocating_shards > 0 || clusterHealth.initializing_shards > 0 || clusterHealth.number_of_pending_tasks > 0) && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              {getHealthIcon(clusterHealth.status)}
-              <span>Cluster Health</span>
-              <Badge 
-                variant={clusterHealth.status === "green" ? "default" : clusterHealth.status === "yellow" ? "secondary" : "destructive"}
-              >
-                {clusterHealth.status.toUpperCase()}
-              </Badge>
-            </CardTitle>
+            <CardTitle className="text-base">Operations in progress</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Active Shards</p>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold">{formatNumber(clusterHealth.active_shards)}</span>
-                    <Badge variant="outline">{clusterHealth.active_shards_percent_as_number}%</Badge>
-                  </div>
-                  <Progress value={clusterHealth.active_shards_percent_as_number} className="h-2" />
-                </div>
-              </div>
-              
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Primary Shards</p>
-                <p className="text-2xl font-bold">{formatNumber(clusterHealth.active_primary_shards)}</p>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Nodes</p>
-                <p className="text-2xl font-bold">
-                  {formatNumber(clusterHealth.number_of_nodes)}
-                  <span className="text-sm font-normal text-muted-foreground ml-1">
-                    ({clusterHealth.number_of_data_nodes} data)
-                  </span>
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Unassigned Shards</p>
-                <p className={`text-2xl font-bold ${clusterHealth.unassigned_shards > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                  {formatNumber(clusterHealth.unassigned_shards)}
-                </p>
-              </div>
+          <CardContent className="grid gap-3 sm:grid-cols-3 text-sm">
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <span className="text-muted-foreground">Relocating shards</span>
+              <span className="font-medium tabular-nums">{clusterHealth.relocating_shards}</span>
             </div>
-
-            {/* Additional Status Information */}
-            {(clusterHealth.relocating_shards > 0 || clusterHealth.initializing_shards > 0 || clusterHealth.number_of_pending_tasks > 0) && (
-              <div className="mt-4 pt-4 border-t">
-                <h4 className="text-sm font-medium mb-2">Active Operations</h4>
-                <div className="grid gap-2 md:grid-cols-3">
-                  {clusterHealth.relocating_shards > 0 && (
-                    <div className="flex items-center space-x-2">
-                      <TrendingUp className="h-4 w-4 text-blue-500" />
-                      <span className="text-sm">Relocating: {clusterHealth.relocating_shards}</span>
-                    </div>
-                  )}
-                  {clusterHealth.initializing_shards > 0 && (
-                    <div className="flex items-center space-x-2">
-                      <Clock className="h-4 w-4 text-yellow-500" />
-                      <span className="text-sm">Initializing: {clusterHealth.initializing_shards}</span>
-                    </div>
-                  )}
-                  {clusterHealth.number_of_pending_tasks > 0 && (
-                    <div className="flex items-center space-x-2">
-                      <Activity className="h-4 w-4 text-purple-500" />
-                      <span className="text-sm">Pending Tasks: {clusterHealth.number_of_pending_tasks}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <span className="text-muted-foreground">Initializing shards</span>
+              <span className="font-medium tabular-nums">{clusterHealth.initializing_shards}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <span className="text-muted-foreground">Pending tasks</span>
+              <span className="font-medium tabular-nums">{clusterHealth.number_of_pending_tasks}</span>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Cluster Analysis Quick View */}
       {clusterHealth && (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <div className="flex items-center">
-                <BarChart3 className="h-5 w-5 mr-2" />
-                Cluster Analysis
-              </div>
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => router.push('/cluster-analysis')}
-              >
-                View Details
-              </Button>
-            </CardTitle>
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
+            <div className="space-y-1">
+              <CardTitle className="text-base">Quick checks</CardTitle>
+              <CardDescription>Basic resilience checks. Cluster analysis scores configuration and performance in depth.</CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => router.push('/cluster-analysis')}>
+              Open analysis
+            </Button>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Health Score</p>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold">
-                      {clusterHealth.status === 'green' ? '95' : 
-                       clusterHealth.status === 'yellow' ? '75' : '45'}%
-                    </span>
-                    <Badge variant={
-                      clusterHealth.status === 'green' ? 'default' : 
-                      clusterHealth.status === 'yellow' ? 'secondary' : 'destructive'
-                    }>
-                      {clusterHealth.status.toUpperCase()}
-                    </Badge>
-                  </div>
-                  <Progress 
-                    value={clusterHealth.status === 'green' ? 95 : 
-                           clusterHealth.status === 'yellow' ? 75 : 45} 
-                    className="h-2" 
-                  />
-                </div>
-              </div>
-              
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Configuration</p>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold">
-                      {clusterHealth.number_of_nodes >= 3 ? '85' : '60'}%
-                    </span>
-                    <Badge variant={clusterHealth.number_of_nodes >= 3 ? 'default' : 'secondary'}>
-                      {clusterHealth.number_of_nodes >= 3 ? 'GOOD' : 'WARNING'}
-                    </Badge>
-                  </div>
-                  <Progress 
-                    value={clusterHealth.number_of_nodes >= 3 ? 85 : 60} 
-                    className="h-2" 
-                  />
-                </div>
-              </div>
-              
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Best Practices</p>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold">
-                      {clusterHealth.unassigned_shards === 0 ? '90' : '65'}%
-                    </span>
-                    <Badge variant={clusterHealth.unassigned_shards === 0 ? 'default' : 'secondary'}>
-                      {clusterHealth.unassigned_shards === 0 ? 'COMPLIANT' : 'REVIEW'}
-                    </Badge>
-                  </div>
-                  <Progress 
-                    value={clusterHealth.unassigned_shards === 0 ? 90 : 65} 
-                    className="h-2" 
-                  />
-                </div>
-              </div>
-            </div>
-            
-            {(clusterHealth.status !== 'green' || clusterHealth.unassigned_shards > 0 || clusterHealth.number_of_nodes < 3) && (
-              <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                <div className="flex items-center text-amber-700 dark:text-amber-400">
-                  <AlertTriangle className="h-4 w-4 mr-2" />
-                  <span className="text-sm font-medium">
-                    {clusterHealth.status !== 'green' && 'Cluster health needs attention. '}
-                    {clusterHealth.unassigned_shards > 0 && 'Unassigned shards detected. '}
-                    {clusterHealth.number_of_nodes < 3 && 'Consider adding more nodes for high availability.'}
-                  </span>
-                </div>
-              </div>
-            )}
+            <ul className="divide-y rounded-md border">
+              {checks.map(c => (
+                <li key={c.label} className="flex items-center gap-3 px-3 py-2.5 text-sm">
+                  {c.ok
+                    ? <CheckCircle className="h-4 w-4 shrink-0 text-success" />
+                    : c.warn
+                      ? <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+                      : <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />}
+                  <span className="font-medium">{c.label}</span>
+                  <span className="ml-auto text-right text-muted-foreground">{c.detail}</span>
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
       )}
 
-      {/* Cluster Statistics */}
       {clusterStats && (
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Indices Statistics */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center">
-                <Database className="h-5 w-5 mr-2" />
-                Indices Statistics
-              </CardTitle>
+              <CardTitle className="text-base">Indices</CardTitle>
+              <CardDescription>Shards, documents and storage across all indices.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 grid-cols-2">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Indices</p>
-                  <p className="text-2xl font-bold">{formatNumber(clusterStats.indices.count)}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Shards</p>
-                  <p className="text-2xl font-bold">{formatNumber(clusterStats.indices.shards.total)}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Primary Shards</p>
-                  <p className="text-2xl font-bold">{formatNumber(clusterStats.indices.shards.primaries)}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Replica Shards</p>
-                  <p className="text-2xl font-bold">{formatNumber(clusterStats.indices.shards.total - clusterStats.indices.shards.primaries)}</p>
-                </div>
-              </div>
-              
-              <div className="pt-4 border-t">
-                <div className="grid gap-4 grid-cols-2">
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Total Documents</p>
-                    <p className="text-xl font-bold">{formatNumber(clusterStats.indices.docs.count)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Storage Size</p>
-                    <p className="text-xl font-bold">{formatBytes(clusterStats.indices.store.size_in_bytes)}</p>
-                  </div>
-                </div>
-              </div>
+            <CardContent>
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+                <Metric label="Indices" value={formatNumber(clusterStats.indices.count)} />
+                <Metric label="Total shards" value={formatNumber(clusterStats.indices.shards.total)} />
+                <Metric label="Primary shards" value={formatNumber(clusterStats.indices.shards.primaries)} />
+                <Metric label="Replica shards" value={formatNumber(clusterStats.indices.shards.total - clusterStats.indices.shards.primaries)} />
+                <Metric label="Documents" value={formatNumber(clusterStats.indices.docs.count)} />
+                <Metric label="Store size" value={formatBytes(clusterStats.indices.store.size_in_bytes)} />
+              </dl>
             </CardContent>
           </Card>
 
-          {/* Nodes Statistics */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center">
-                <Server className="h-5 w-5 mr-2" />
-                Nodes Statistics
-              </CardTitle>
+              <CardTitle className="text-base">Nodes</CardTitle>
+              <CardDescription>Node count by role.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 grid-cols-2">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Nodes</p>
-                  <p className="text-2xl font-bold">{formatNumber(clusterStats.nodes.count.total)}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Data Nodes</p>
-                  <p className="text-2xl font-bold">{formatNumber(clusterStats.nodes.count.data)}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Master Nodes</p>
-                  <p className="text-2xl font-bold">{formatNumber(clusterStats.nodes.count.master)}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Ingest Nodes</p>
-                  <p className="text-2xl font-bold">{formatNumber(clusterStats.nodes.count.ingest)}</p>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Coordinating Only</p>
-                  <p className="text-xl font-bold">{formatNumber(clusterStats.nodes.count.coordinating_only)}</p>
-                </div>
-              </div>
+            <CardContent>
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+                <Metric label="Total" value={formatNumber(clusterStats.nodes.count.total)} />
+                <Metric label="Data" value={formatNumber(clusterStats.nodes.count.data)} />
+                <Metric label="Master-eligible" value={formatNumber(clusterStats.nodes.count.master)} />
+                <Metric label="Ingest" value={formatNumber(clusterStats.nodes.count.ingest)} />
+                <Metric label="Coordinating only" value={formatNumber(clusterStats.nodes.count.coordinating_only)} />
+              </dl>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Loading State */}
       {loading && !clusterHealth && (
-        <Card>
-          <CardContent className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-              <p className="text-lg font-medium">Loading cluster data...</p>
-              <p className="text-muted-foreground">Fetching health and statistics</p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-6">
+          <StatGrid>
+            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[104px] rounded-xl" />)}
+          </StatGrid>
+          <Skeleton className="h-48 rounded-xl" />
+        </div>
       )}
 
-      {/* No Data State */}
       {!loading && !clusterHealth && isConnected && (
-        <Card>
-          <CardContent className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <Activity className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-              <p className="text-lg font-medium">No Cluster Data</p>
-              <p className="text-muted-foreground mb-4">
-                Unable to fetch cluster information
-              </p>
-              <Button onClick={loadClusterData} variant="outline">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Retry
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Activity}
+          title="No cluster data"
+          description="The cluster did not return health information."
+          action={
+            <Button variant="outline" size="sm" onClick={loadClusterData}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Retry
+            </Button>
+          }
+        />
       )}
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-1">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-lg font-semibold tabular-nums">{value}</dd>
     </div>
   );
 }

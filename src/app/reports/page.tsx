@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Database, AlertTriangle, Download, FileText, Clock, Server, RefreshCw } from 'lucide-react';
+import Link from 'next/link';
+import { Database, AlertTriangle, Download, FileText, Loader2, RefreshCw } from 'lucide-react';
+import { EmptyState, HealthBadge, PageHeader, StatCard } from '@/components/app';
 import { useConnection } from '@/contexts/connection-context';
 
 interface ClusterInfo {
@@ -64,7 +66,8 @@ export default function ReportsPage() {
   const [dataFetched, setDataFetched] = useState(false)
 
   // Get current connection details
-  const currentConnection = connectionConfig ? (() => {
+  // Memoised so effects that depend on it only re-run when the connection actually changes
+  const currentConnection = useMemo(() => connectionConfig ? (() => {
     try {
       const url = new URL(connectionConfig.url)
       return {
@@ -80,11 +83,15 @@ export default function ReportsPage() {
       console.error('Error parsing connection URL:', error)
       return null
     }
-  })() : null
+  })() : null, [connectionConfig, savedConnections, currentConnectionId])
+
+  // fetchClusterData is declared below and recreated every render; the effect
+  // calls the latest version through a ref so its trigger values stay unchanged.
+  const fetchClusterDataRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
     if (currentConnection && isConnected && !dataFetched) {
-      fetchClusterData()
+      fetchClusterDataRef.current()
     }
   }, [currentConnection, isConnected, dataFetched])
 
@@ -96,7 +103,6 @@ export default function ReportsPage() {
       setDataFetched(true) // Set flag to prevent continuous requests
       
       // Debug logging
-      console.log('Current connection:', currentConnection)
       
       // Validate connection config
       if (!currentConnection.url) {
@@ -104,21 +110,12 @@ export default function ReportsPage() {
         return
       }
       
-      // Prepare ES config for proxy
-      const esConfig = {
-        url: currentConnection.url,
-        auth: currentConnection.auth,
-        headers: {}
-      }
-      
-      console.log('ES config:', esConfig)
-      
+      // The ES proxy uses this user's server-side cluster session — no config is sent
       // Fetch cluster health using es-proxy
       const healthResponse = await fetch('/api/es-proxy/_cluster/health', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'X-ES-Config': JSON.stringify(esConfig),
         },
       })
 
@@ -136,7 +133,6 @@ export default function ReportsPage() {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'X-ES-Config': JSON.stringify(esConfig),
         },
       })
 
@@ -150,7 +146,6 @@ export default function ReportsPage() {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'X-ES-Config': JSON.stringify(esConfig),
         },
       })
 
@@ -165,6 +160,8 @@ export default function ReportsPage() {
       setDataFetched(false) // Allow retry on error
     }
   }
+
+  fetchClusterDataRef.current = fetchClusterData
 
   // Add refresh function
   const refreshData = () => {
@@ -193,58 +190,51 @@ export default function ReportsPage() {
       setGeneratingType(format)
       setError(null)
 
-      // Prepare ES config for comprehensive data collection
-      const esConfig = {
-        url: currentConnection.url,
-        auth: currentConnection.auth,
-        headers: {}
-      }
-
       // Collect comprehensive cluster data for all report types
       const promises = [
         // Basic cluster info
         fetch('/api/es-proxy/_cluster/health', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
         
         // Cluster stats
         fetch('/api/es-proxy/_cluster/stats', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
         
         // Node information
         fetch('/api/es-proxy/_nodes/stats', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
         
         // Indices information
         fetch('/api/es-proxy/_cat/indices?format=json&bytes=b', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
         
         // Index stats
         fetch('/api/es-proxy/_stats', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
         
         // Shard allocation
         fetch('/api/es-proxy/_cat/shards?format=json', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
         
         // Index templates
         fetch('/api/es-proxy/_index_template', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
         
         // Cluster settings
         fetch('/api/es-proxy/_cluster/settings', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
         
         // Pending tasks
         fetch('/api/es-proxy/_cluster/pending_tasks', {
-          headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+          headers: { 'Content-Type': 'application/json' }
         }).catch(() => null),
       ]
 
@@ -366,34 +356,27 @@ export default function ReportsPage() {
         const comprehensivePromises = [
           // Basic cluster info
           fetchWithTimeout('/api/es-proxy/_cluster/health', {
-            headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+            headers: { 'Content-Type': 'application/json' }
           }, 10000).catch(() => null),
           
           // Node information with full stats including JVM, OS, process info
           fetchWithTimeout('/api/es-proxy/_nodes/stats', {
-            headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+            headers: { 'Content-Type': 'application/json' }
           }, 10000).catch(() => null),
           
           // Indices information with comprehensive stats
           fetchWithTimeout('/api/es-proxy/_cat/indices?format=json&bytes=b&h=index,health,status,docs.count,docs.deleted,store.size,pri,rep,creation.date', {
-            headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+            headers: { 'Content-Type': 'application/json' }
           }, 10000).catch(() => null),
           
           // Cluster stats for search and indexing performance
           fetchWithTimeout('/api/es-proxy/_cluster/stats', {
-            headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
-          }, 10000).catch(() => null),
-          
-          // Shard allocation with reasons for unassigned shards
-          fetchWithTimeout('/api/es-proxy/_cluster/allocation/explain', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) },
-            body: JSON.stringify({})
+            headers: { 'Content-Type': 'application/json' }
           }, 10000).catch(() => null),
           
           // Cat shards for detailed shard info
           fetchWithTimeout('/api/es-proxy/_cat/shards?format=json&h=index,shard,prirep,state,docs,store,ip,node,unassigned.reason', {
-            headers: { 'Content-Type': 'application/json', 'X-ES-Config': JSON.stringify(esConfig) }
+            headers: { 'Content-Type': 'application/json' }
           }, 10000).catch(() => null),
         ]
 
@@ -405,7 +388,6 @@ export default function ReportsPage() {
           nodesStatsData,
           indicesData,
           clusterStatsData,
-          allocationData,
           shardsData
         ] = await Promise.all(
           comprehensiveResponses.map(async (response, index) => {
@@ -802,44 +784,31 @@ export default function ReportsPage() {
 
   if (!currentConnection || !isConnected) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <Alert>
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>
-            Please connect to an Elasticsearch cluster first. Go to the Connect page to establish a connection.
-          </AlertDescription>
-        </Alert>
-        
+      <div className="space-y-6">
+        <PageHeader title="Reports" description="Download a cluster report as PDF or JSON." />
+        <EmptyState
+          icon={Database}
+          title="No cluster connected"
+          description="Reports are generated from the cluster you are connected to."
+          action={<Button asChild><Link href="/connections">Go to connections</Link></Button>}
+        />
         {savedConnections.length > 0 && (
-          <Card className="mt-6">
+          <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Database className="h-5 w-5" />
-                Saved Connections
-              </CardTitle>
-              <CardDescription>
-                Click on a saved connection to connect and view reports
-              </CardDescription>
+              <CardTitle className="text-base">Remembered in this browser</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-2">
+              <ul className="divide-y">
                 {savedConnections.map((connection: any) => (
-                  <Button
-                    key={connection.id}
-                    variant="outline"
-                    className="w-full justify-start"
-                    onClick={() => selectConnection(connection.id)}
-                  >
-                    <Server className="h-4 w-4 mr-2" />
-                    <div className="text-left">
-                      <div className="font-medium">{connection.name}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {connection.url}
-                      </div>
+                  <li key={connection.id} className="flex items-center justify-between gap-2 py-2.5">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{connection.name}</div>
+                      <div className="truncate font-mono text-xs text-muted-foreground">{connection.url}</div>
                     </div>
-                  </Button>
+                    <Button size="sm" variant="outline" onClick={() => selectConnection(connection.id)}>Connect</Button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </CardContent>
           </Card>
         )}
@@ -848,14 +817,27 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-6">
-      {/* Header */}
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Cluster Reports</h1>
-        <p className="text-muted-foreground">
-          Generate comprehensive reports about your Elasticsearch cluster
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Reports"
+        description="Download a point-in-time report of the connected cluster."
+        meta={<Badge variant="outline" className="font-mono text-xs">{currentConnection.name || currentConnection.url}</Badge>}
+        actions={
+          <>
+            <Button variant="outline" onClick={refreshData} disabled={!dataFetched}>
+              <RefreshCw className="h-4 w-4 mr-1.5" />Refresh
+            </Button>
+            <Button variant="outline" onClick={() => generateReport('json')} disabled={isGenerating}>
+              {isGenerating && generatingType === 'json' ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Download className="h-4 w-4 mr-1.5" />}
+              JSON
+            </Button>
+            <Button onClick={() => generateReport('pdf')} disabled={isGenerating}>
+              {isGenerating && generatingType === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <FileText className="h-4 w-4 mr-1.5" />}
+              Download PDF
+            </Button>
+          </>
+        }
+      />
 
       {error && (
         <Alert variant="destructive">
@@ -864,176 +846,73 @@ export default function ReportsPage() {
         </Alert>
       )}
 
-      {/* Connection Info */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="h-5 w-5" />
-            Current Connection
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={refreshData}
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-2"
-              disabled={!dataFetched}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh Data
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="p-3 bg-muted rounded-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">{currentConnection.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {currentConnection.url}
-                  </p>
-                </div>
-                <Badge variant={clusterInfo?.status === 'green' ? 'default' : 'destructive'}>
-                  {clusterInfo?.status || 'Unknown'}
-                </Badge>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Cluster Summary */}
-      {clusterInfo && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Cluster Summary</CardTitle>
-            <CardDescription>Overview of your Elasticsearch cluster</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Cluster Name</p>
-                <p className="text-2xl font-bold">{clusterInfo.cluster_name}</p>
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Total Nodes</p>
-                <p className="text-2xl font-bold">{clusterInfo.number_of_nodes}</p>
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Active Shards</p>
-                <p className="text-2xl font-bold">{clusterInfo.active_shards}</p>
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Indices</p>
-                <p className="text-2xl font-bold">{indexInfo.length}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {isGenerating && (
+        <Alert>
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <AlertDescription>
+            {generatingType === 'pdf'
+              ? 'Building the PDF report. Large clusters can take up to a minute.'
+              : 'Building the JSON report.'}
+          </AlertDescription>
+        </Alert>
       )}
 
-      {/* Report Generation */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Generate Reports
-          </CardTitle>
-          <CardDescription>
-            Export comprehensive reports of your cluster status, nodes, and indices
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-4">
-            <Button 
-              onClick={() => generateReport('pdf')}
-              disabled={isGenerating}
-              className="flex items-center gap-2"
-              variant="default"
-            >
-              <Download className="h-4 w-4" />
-              {isGenerating ? 'Generating...' : 'Export as PDF (Comprehensive)'}
-            </Button>
-            <Button 
-              onClick={() => generateReport('json')}
-              disabled={isGenerating}
-              variant="outline"
-              className="flex items-center gap-2"
-            >
-              <Download className="h-4 w-4" />
-              {isGenerating ? 'Generating...' : 'Export as JSON'}
-            </Button>
-          </div>
-          
-          {isGenerating && (
-            <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-              <Clock className="h-4 w-4 animate-spin" />
-              {generatingType === 'pdf' 
-                ? 'Generating PDF report... This may take up to 2 minutes for comprehensive analysis.'
-                : 'Generating JSON report... This will complete shortly.'
-              }
-            </div>
-          )}
-
-          <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-            <h4 className="font-medium text-blue-900 mb-2">Report Types:</h4>
-            <div className="space-y-2 text-sm text-blue-800">
-              <div><strong>PDF:</strong> Comprehensive cluster analysis with visual charts, performance metrics, search analytics, issues detection, and recommendations. Includes data from all cluster pages.</div>
-              <div><strong>JSON:</strong> Raw structured data for programmatic use and integration with other tools.</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Report Content Preview */}
       {clusterInfo && (
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          <StatCard label="Cluster" value={<span className="truncate text-xl">{clusterInfo.cluster_name}</span>} hint={<HealthBadge status={clusterInfo.status} />} />
+          <StatCard label="Nodes" value={clusterInfo.number_of_nodes} />
+          <StatCard label="Active shards" value={clusterInfo.active_shards} />
+          <StatCard label="Indices" value={indexInfo.length} />
+        </div>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Report Preview</CardTitle>
-            <CardDescription>Preview of data that will be included in the reports</CardDescription>
+            <CardTitle className="text-base">What the reports contain</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
+          <CardContent className="grid gap-3 text-sm">
+            <div>
+              <p className="font-medium">PDF</p>
+              <p className="text-muted-foreground">A formatted document with cluster health, node resources, index sizes, shard allocation, search performance, and detected issues with recommendations.</p>
+            </div>
+            <div>
+              <p className="font-medium">JSON</p>
+              <p className="text-muted-foreground">The same data, structured for scripts and other tools.</p>
+            </div>
+            <p className="text-xs text-muted-foreground">To receive reports by email on a schedule, use <Link href="/scheduled-reports" className="underline underline-offset-2">Scheduled reports</Link>.</p>
+          </CardContent>
+        </Card>
+
+        {clusterInfo && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Preview</CardTitle>
+              <CardDescription>A sample of the data included.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 text-sm">
               <div>
-                <h4 className="font-medium mb-2">Cluster Health</h4>
-                <div className="grid md:grid-cols-3 gap-4 text-sm">
-                  <div>Status: <Badge variant={clusterInfo.status === 'green' ? 'default' : 'destructive'}>{clusterInfo.status}</Badge></div>
-                  <div>Nodes: {clusterInfo.number_of_nodes}</div>
-                  <div>Shards: {clusterInfo.active_shards}</div>
-                </div>
-              </div>
-              
-              <div>
-                <h4 className="font-medium mb-2">Nodes ({nodeInfo.length})</h4>
-                <div className="text-sm text-muted-foreground">
+                <p className="mb-1 font-medium">Nodes ({nodeInfo.length})</p>
+                <ul className="space-y-0.5 text-muted-foreground">
                   {nodeInfo.slice(0, 3).map((node, index) => (
-                    <div key={index}>{node.name} - {node.roles.join(', ')}</div>
+                    <li key={index} className="truncate">{node.name} · {node.roles.join(', ')}</li>
                   ))}
-                  {nodeInfo.length > 3 && <div>... and {nodeInfo.length - 3} more</div>}
-                </div>
+                  {nodeInfo.length > 3 && <li>and {nodeInfo.length - 3} more</li>}
+                </ul>
               </div>
-              
               <div>
-                <h4 className="font-medium mb-2">Indices ({indexInfo.length})</h4>
-                <div className="text-sm text-muted-foreground">
+                <p className="mb-1 font-medium">Indices ({indexInfo.length})</p>
+                <ul className="space-y-0.5 text-muted-foreground">
                   {indexInfo.slice(0, 3).map((index, idx) => (
-                    <div key={idx}>{index.index} - {index['docs.count']} docs ({index['store.size']})</div>
+                    <li key={idx} className="truncate">{index.index} · {Number(index['docs.count'] ?? 0).toLocaleString()} docs</li>
                   ))}
-                  {indexInfo.length > 3 && <div>... and {indexInfo.length - 3} more</div>}
-                </div>
+                  {indexInfo.length > 3 && <li>and {indexInfo.length - 3} more</li>}
+                </ul>
               </div>
-
-              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
-                <p className="text-sm text-yellow-800">
-                  <strong>PDF reports include additional data:</strong> Search performance analytics, resource utilization, 
-                  automatic issue detection, optimization recommendations, and visual charts.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   )
 }

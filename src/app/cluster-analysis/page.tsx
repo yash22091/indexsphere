@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useRef } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState, HealthBadge, PageHeader, SeverityBadge, StatCard, StatGrid, StatusDot } from "@/components/app";
 import { useConnection } from "@/contexts/connection-context";
 import { getElasticsearchClient } from "@/lib/elasticsearch";
 import { useRouter } from "next/navigation";
@@ -22,14 +24,12 @@ import {
   TrendingUp,
   Cpu,
   HardDrive,
-  Network,
   BarChart3,
   RefreshCw,
   Loader2,
   FileText,
   Target,
-  Zap,
-  Wifi
+  Zap
 } from "lucide-react";
 
 interface TemplateInfo {
@@ -134,16 +134,16 @@ export default function ClusterAnalysisPage() {
       case 'pass':
       case 'good':
       case 'green':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
+        return <CheckCircle className="h-4 w-4 text-success" />;
       case 'warning':
       case 'yellow':
-        return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+        return <AlertTriangle className="h-4 w-4 text-warning" />;
       case 'fail':
       case 'critical':
       case 'red':
-        return <XCircle className="h-4 w-4 text-red-500" />;
+        return <XCircle className="h-4 w-4 text-destructive" />;
       default:
-        return <Info className="h-4 w-4 text-blue-500" />;
+        return <Info className="h-4 w-4 text-info" />;
     }
   };
 
@@ -152,29 +152,16 @@ export default function ClusterAnalysisPage() {
       case 'pass':
       case 'good':
       case 'green':
-        return 'text-green-500';
+        return 'text-success';
       case 'warning':
       case 'yellow':
-        return 'text-yellow-500';
+        return 'text-warning';
       case 'fail':
       case 'critical':
       case 'red':
-        return 'text-red-500';
+        return 'text-destructive';
       default:
-        return 'text-blue-500';
-    }
-  };
-
-  const getHealthBadgeVariant = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'green':
-        return 'default';
-      case 'yellow':
-        return 'secondary';
-      case 'red':
-        return 'destructive';
-      default:
-        return 'outline';
+        return 'text-info';
     }
   };
 
@@ -231,7 +218,7 @@ export default function ClusterAnalysisPage() {
     return inferredTemplates;
   };
 
-  const fetchTemplates = async (client: any): Promise<TemplateInfo[]> => {
+  const fetchTemplates = async (_client: any): Promise<TemplateInfo[]> => {
     const templates: TemplateInfo[] = [];
     
     try {
@@ -663,66 +650,64 @@ export default function ClusterAnalysisPage() {
   };
 
   useEffect(() => {
-    if (!isConnected || !connectionConfig) {
-      router.push('/connect');
-      return;
-    }
+    // The connection is restored asynchronously after a reload: show an empty
+    // state while disconnected instead of redirecting away.
     setIsLoading(false);
-  }, [isConnected, connectionConfig, router]);
+  }, [isConnected, connectionConfig]);
+
+  // runClusterAnalysis is recreated every render and calls many plain helpers;
+  // call the latest version through a ref so the effect only fires on these triggers.
+  const runClusterAnalysisRef = useRef(runClusterAnalysis);
+  runClusterAnalysisRef.current = runClusterAnalysis;
 
   useEffect(() => {
     if (!isLoading && isConnected && connectionConfig) {
-      runClusterAnalysis();
+      runClusterAnalysisRef.current();
     }
   }, [isLoading, isConnected, connectionConfig]);
 
+  const header = (
+    <PageHeader
+      title="Cluster analysis"
+      description="Scores health, performance, configuration and sizing against Elasticsearch / OpenSearch best practices."
+      meta={analysis ? <HealthBadge status={analysis.health.status} /> : undefined}
+      actions={
+        <Button size="sm" onClick={runClusterAnalysis} disabled={isAnalyzing || !isConnected}>
+          {isAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          {isAnalyzing ? "Analyzing…" : "Run analysis"}
+        </Button>
+      }
+    />
+  );
+
   if (isLoading) {
     return (
-      <div className="container mx-auto py-8">
-        <div className="flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin" />
-          <span className="ml-2">Loading...</span>
-        </div>
+      <div className="space-y-6">
+        {header}
+        <StatGrid>
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[104px] rounded-xl" />)}
+        </StatGrid>
       </div>
     );
   }
 
   if (!isConnected || !connectionConfig) {
     return (
-      <div className="container mx-auto py-8">
-        <Alert>
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>
-            No Elasticsearch connection configured. Please connect first.
-          </AlertDescription>
-        </Alert>
+      <div className="space-y-6">
+        {header}
+        <EmptyState
+          icon={Database}
+          title="No cluster connected"
+          description="Connect to an Elasticsearch or OpenSearch cluster to analyze it."
+          action={<Button size="sm" onClick={() => router.push('/connections')}>Go to connections</Button>}
+        />
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto py-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Cluster Analysis</h1>
-          <p className="text-muted-foreground">
-            Comprehensive analysis of your Elasticsearch cluster health, performance, and configuration
-          </p>
-        </div>
-        <Button onClick={runClusterAnalysis} disabled={isAnalyzing}>
-          {isAnalyzing ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Analyzing...
-            </>
-          ) : (
-            <>
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Refresh Analysis
-            </>
-          )}
-        </Button>
-      </div>
+    <div className="space-y-6">
+      {header}
 
       {error && (
         <Alert variant="destructive">
@@ -733,91 +718,55 @@ export default function ClusterAnalysisPage() {
 
       {analysis ? (
         <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="templates">Templates</TabsTrigger>
             <TabsTrigger value="configuration">Configuration</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
             <TabsTrigger value="sizing">Sizing</TabsTrigger>
             <TabsTrigger value="plugins">Plugins</TabsTrigger>
-            <TabsTrigger value="insights">System Insights</TabsTrigger>
+            <TabsTrigger value="insights">System insights</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
-            {/* Health Overview */}
-            <div className="grid gap-6 lg:grid-cols-4">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Cluster Health</CardTitle>
-                  <Database className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center space-x-2">
-                    <Badge variant={getHealthBadgeVariant(analysis.health.status)}>
-                      {analysis.health.status.toUpperCase()}
-                    </Badge>
-                    <span className="text-2xl font-bold">{analysis.health.score}%</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Health score</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Performance</CardTitle>
-                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{analysis.performance.overall}%</div>
-                  <p className="text-xs text-muted-foreground">Overall performance</p>
-                  <Progress value={analysis.performance.overall} className="mt-2" />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Configuration</CardTitle>
-                  <Settings className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {analysis.configuration.checks.filter(c => c.status === 'pass').length}/
-                    {analysis.configuration.checks.length}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Checks passed</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Index Templates</CardTitle>
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{templates.length}</div>
-                  <p className="text-xs text-muted-foreground">Templates configured</p>
-                </CardContent>
-              </Card>
-            </div>
+            <StatGrid>
+              <StatCard
+                label="Health score"
+                icon={Database}
+                value={`${analysis.health.score}%`}
+                tone={analysis.health.status === 'red' ? 'danger' : analysis.health.status === 'yellow' ? 'warning' : 'default'}
+                hint={<span className="inline-flex items-center gap-1.5"><StatusDot status={analysis.health.status} />Cluster is {analysis.health.status}</span>}
+              />
+              <StatCard
+                label="Performance"
+                icon={TrendingUp}
+                value={`${analysis.performance.overall}%`}
+                hint={<Progress value={analysis.performance.overall} className="mt-1 h-1.5" />}
+              />
+              <StatCard
+                label="Configuration checks"
+                icon={Settings}
+                value={`${analysis.configuration.checks.filter(c => c.status === 'pass').length} / ${analysis.configuration.checks.length}`}
+                hint="checks passed"
+              />
+              <StatCard label="Index templates" icon={FileText} value={templates.length} hint="configured" />
+            </StatGrid>
 
             {/* Quick Issues */}
             {analysis.health.issues.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center">
-                    <AlertTriangle className="h-5 w-5 mr-2 text-yellow-500" />
-                    Issues Detected
-                  </CardTitle>
+                  <CardTitle className="text-base">Issues detected</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-2">
+                  <ul className="space-y-2">
                     {analysis.health.issues.map((issue, index) => (
-                      <div key={index} className="flex items-center text-sm">
-                        <XCircle className="h-4 w-4 mr-2 text-red-500" />
+                      <li key={index} className="flex items-start gap-2 text-sm">
+                        <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                         {issue}
-                      </div>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </CardContent>
               </Card>
             )}
@@ -826,20 +775,17 @@ export default function ClusterAnalysisPage() {
             {analysis.health.recommendations.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center">
-                    <Target className="h-5 w-5 mr-2 text-blue-500" />
-                    Recommendations
-                  </CardTitle>
+                  <CardTitle className="text-base">Recommendations</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-2">
+                  <ul className="space-y-2">
                     {analysis.health.recommendations.map((rec, index) => (
-                      <div key={index} className="flex items-center text-sm">
-                        <CheckCircle className="h-4 w-4 mr-2 text-green-500" />
+                      <li key={index} className="flex items-start gap-2 text-sm">
+                        <Target className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                         {rec}
-                      </div>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </CardContent>
               </Card>
             )}
@@ -848,23 +794,21 @@ export default function ClusterAnalysisPage() {
           <TabsContent value="templates" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Index Templates</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Templates define settings, mappings, and aliases for index patterns
-                </p>
+                <CardTitle className="text-base">Index templates</CardTitle>
+                <CardDescription>Templates define settings, mappings and aliases for index patterns.</CardDescription>
               </CardHeader>
               <CardContent>
                 {templates.length === 0 ? (
                   <div className="text-center py-8">
                     <FileText className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">No index templates found</p>
+                    <p className="text-sm text-muted-foreground">No index templates found.</p>
                   </div>
                 ) : (
-                  <Table>
+                  <div className="overflow-x-auto"><Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Template Name</TableHead>
-                        <TableHead>Index Patterns</TableHead>
+                        <TableHead>Template</TableHead>
+                        <TableHead>Index patterns</TableHead>
                         <TableHead>Priority</TableHead>
                         <TableHead>Features</TableHead>
                       </TableRow>
@@ -900,7 +844,7 @@ export default function ClusterAnalysisPage() {
                         </TableRow>
                       ))}
                     </TableBody>
-                  </Table>
+                  </Table></div>
                 )}
               </CardContent>
             </Card>
@@ -909,12 +853,10 @@ export default function ClusterAnalysisPage() {
           <TabsContent value="configuration" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Configuration Analysis</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Evaluation of cluster configuration against best practices
-                </p>
+                <CardTitle className="text-base">Configuration</CardTitle>
+                <CardDescription>Cluster configuration evaluated against best practices.</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -935,19 +877,14 @@ export default function ClusterAnalysisPage() {
                           <div className="flex items-center">
                             {getStatusIcon(check.status)}
                             <span className={`ml-2 ${getStatusColor(check.status)}`}>
-                              {check.status.toUpperCase()}
+                              {check.status.charAt(0).toUpperCase() + check.status.slice(1)}
                             </span>
                           </div>
                         </TableCell>
                         <TableCell>{check.current}</TableCell>
                         <TableCell>{check.recommended}</TableCell>
                         <TableCell>
-                          <Badge variant={
-                            check.impact === 'high' ? 'destructive' : 
-                            check.impact === 'medium' ? 'default' : 'secondary'
-                          }>
-                            {check.impact}
-                          </Badge>
+                          <SeverityBadge level={check.impact} className="capitalize">{check.impact}</SeverityBadge>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -960,12 +897,10 @@ export default function ClusterAnalysisPage() {
           <TabsContent value="performance" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Performance Metrics</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Current performance indicators and thresholds
-                </p>
+                <CardTitle className="text-base">Performance</CardTitle>
+                <CardDescription>Current indicators compared with recommended thresholds.</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -986,7 +921,7 @@ export default function ClusterAnalysisPage() {
                           <div className="flex items-center">
                             {getStatusIcon(metric.status)}
                             <span className={`ml-2 ${getStatusColor(metric.status)}`}>
-                              {metric.status.toUpperCase()}
+                              {metric.status.charAt(0).toUpperCase() + metric.status.slice(1)}
                             </span>
                           </div>
                         </TableCell>
@@ -1005,41 +940,41 @@ export default function ClusterAnalysisPage() {
             <div className="grid gap-6 lg:grid-cols-2">
               <Card>
                 <CardHeader>
-                  <CardTitle>Current Sizing</CardTitle>
+                  <CardTitle className="text-base">Current sizing</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="flex items-center">
-                      <Server className="h-4 w-4 mr-2" />
+                      <Server className="h-4 w-4 mr-2 text-muted-foreground" />
                       Nodes
                     </span>
                     <span className="font-medium">{analysis.sizing.current.nodes}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="flex items-center">
-                      <HardDrive className="h-4 w-4 mr-2" />
+                      <HardDrive className="h-4 w-4 mr-2 text-muted-foreground" />
                       Storage
                     </span>
                     <span className="font-medium">{analysis.sizing.current.totalStorage}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="flex items-center">
-                      <Cpu className="h-4 w-4 mr-2" />
-                      CPU Cores
+                      <Cpu className="h-4 w-4 mr-2 text-muted-foreground" />
+                      CPU cores
                     </span>
                     <span className="font-medium">{analysis.sizing.current.cpuCores}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="flex items-center">
-                      <BarChart3 className="h-4 w-4 mr-2" />
-                      Data Ingestion
+                      <BarChart3 className="h-4 w-4 mr-2 text-muted-foreground" />
+                      Data ingestion
                     </span>
                     <span className="font-medium">{analysis.sizing.current.dataIngestionRate}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="flex items-center">
-                      <Zap className="h-4 w-4 mr-2" />
-                      Search Rate
+                      <Zap className="h-4 w-4 mr-2 text-muted-foreground" />
+                      Search rate
                     </span>
                     <span className="font-medium">{analysis.sizing.current.searchRate}</span>
                   </div>
@@ -1048,14 +983,14 @@ export default function ClusterAnalysisPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Sizing Recommendations</CardTitle>
+                  <CardTitle className="text-base">Sizing recommendations</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {analysis.sizing.recommendations.length === 0 ? (
                     <div className="text-center py-8">
-                      <CheckCircle className="h-8 w-8 mx-auto mb-2 text-green-500" />
+                      <CheckCircle className="h-8 w-8 mx-auto mb-2 text-success" />
                       <p className="text-sm text-muted-foreground">
-                        Your cluster sizing appears to be appropriate
+                        No sizing changes recommended.
                       </p>
                     </div>
                   ) : (
@@ -1064,12 +999,7 @@ export default function ClusterAnalysisPage() {
                         <div key={index} className="border rounded-lg p-4">
                           <div className="flex items-center justify-between mb-2">
                             <h4 className="font-medium">{rec.category}</h4>
-                            <Badge variant={
-                              rec.priority === 'high' ? 'destructive' : 
-                              rec.priority === 'medium' ? 'default' : 'secondary'
-                            }>
-                              {rec.priority} priority
-                            </Badge>
+                            <SeverityBadge level={rec.priority}>{rec.priority} priority</SeverityBadge>
                           </div>
                           <div className="text-sm space-y-1">
                             <div><strong>Current:</strong> {rec.current}</div>
@@ -1088,10 +1018,7 @@ export default function ClusterAnalysisPage() {
           <TabsContent value="plugins" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Settings className="h-5 w-5 mr-2" />
-                  Installed Plugins
-                </CardTitle>
+                <CardTitle className="text-base">Installed plugins</CardTitle>
               </CardHeader>
               <CardContent>
                 {systemInsights && systemInsights.plugins.length > 0 ? (
@@ -1115,7 +1042,7 @@ export default function ClusterAnalysisPage() {
                   <div className="text-center py-8">
                     <Settings className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">
-                      No plugin information available
+                      No plugin information available.
                     </p>
                   </div>
                 )}
@@ -1128,27 +1055,24 @@ export default function ClusterAnalysisPage() {
               <div className="grid gap-6 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
-                    <CardTitle className="flex items-center">
-                      <BarChart3 className="h-5 w-5 mr-2" />
-                      Cluster Allocation
-                    </CardTitle>
+                    <CardTitle className="text-base">Shard allocation</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {systemInsights.allocation?.shards && (
                       <div className="flex items-center justify-between">
-                        <span>Active Shards</span>
+                        <span className="text-muted-foreground">Active shards</span>
                         <span className="font-medium">{systemInsights.allocation?.shards?.active || 'N/A'}</span>
                       </div>
                     )}
                     {systemInsights.allocation?.relocating_shards !== undefined && (
                       <div className="flex items-center justify-between">
-                        <span>Relocating Shards</span>
+                        <span className="text-muted-foreground">Relocating shards</span>
                         <span className="font-medium">{systemInsights.allocation?.relocating_shards}</span>
                       </div>
                     )}
                     {systemInsights.allocation?.unassigned_shards !== undefined && (
                       <div className="flex items-center justify-between">
-                        <span>Unassigned Shards</span>
+                        <span className="text-muted-foreground">Unassigned shards</span>
                         <span className="font-medium">{systemInsights.allocation?.unassigned_shards}</span>
                       </div>
                     )}
@@ -1157,10 +1081,7 @@ export default function ClusterAnalysisPage() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className="flex items-center">
-                      <Cpu className="h-5 w-5 mr-2" />
-                      Thread Pools
-                    </CardTitle>
+                    <CardTitle className="text-base">Thread pools</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {Object.entries(systemInsights.threadPools as Record<string, Record<string, number>>).map(([name, stats]) => (
@@ -1188,10 +1109,7 @@ export default function ClusterAnalysisPage() {
                 {systemInsights.repositories.length > 0 && (
                   <Card className="lg:col-span-2">
                     <CardHeader>
-                      <CardTitle className="flex items-center">
-                        <HardDrive className="h-5 w-5 mr-2" />
-                        Repositories
-                      </CardTitle>
+                      <CardTitle className="text-base">Snapshot repositories</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
@@ -1220,7 +1138,7 @@ export default function ClusterAnalysisPage() {
               <div className="text-center py-8">
                 <BarChart3 className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  System insights not available
+                  System insights are not available.
                 </p>
               </div>
             )}

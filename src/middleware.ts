@@ -19,58 +19,44 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-// Define public routes that don't require authentication
+// Deny by default: every page requires a session except these.
+// (API routes are excluded from this middleware and authenticate in their handlers.)
 const publicRoutes = ["/auth"];
-
-// Define protected routes that require authentication
-const protectedRoutes = ["/connect", "/overview", "/dashboard", "/nodes", "/indices", "/cluster-analysis", "/settings", "/auth-config", "/user-management"];
 
 // Define admin-only routes
 const adminOnlyRoutes = ["/user-management", "/auth-config"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  
-  // Check if the user has an authentication token
+
+  // Only treat the cookie as a session if it decodes and is not expired.
+  // Signature/boot/user checks happen server-side in every API handler.
   const authToken = request.cookies.get("auth-token")?.value;
-  const isAuthenticated = !!authToken;
+  const payload = authToken ? decodeJwtPayload(authToken) : null;
+  const isAuthenticated = !!payload;
 
   // Gate: if the user's token carries mustChangePassword, only /auth/change-password
-  // and /api/auth/* are allowed. Everything else redirects to the change-password page.
-  if (isAuthenticated) {
-    const payload = decodeJwtPayload(authToken!);
-    if (payload?.mustChangePassword) {
-      const allowed =
-        pathname.startsWith('/auth/change-password') ||
-        pathname.startsWith('/api/auth/');
-      if (!allowed) {
-        return NextResponse.redirect(new URL('/auth/change-password', request.url));
-      }
-    }
+  // is reachable. Everything else redirects to the change-password page.
+  if (payload?.mustChangePassword && !pathname.startsWith('/auth/change-password')) {
+    return NextResponse.redirect(new URL('/auth/change-password', request.url));
   }
 
-  // Allow access to public routes
   if (publicRoutes.includes(pathname)) {
     // If user is already authenticated and trying to access auth page, redirect to connect
-    if (isAuthenticated && pathname === "/auth") {
+    if (isAuthenticated) {
       return NextResponse.redirect(new URL("/connect", request.url));
     }
     return NextResponse.next();
   }
 
-  // Check if the route is protected
-  const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
-
-  if (isProtectedRoute && !isAuthenticated) {
-    // Redirect to authentication page
+  if (!isAuthenticated) {
     const authUrl = new URL("/auth", request.url);
-    authUrl.searchParams.set("redirect", pathname);
+    if (pathname !== "/") authUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(authUrl);
   }
 
   // Check admin-only routes
-  if (isAuthenticated && adminOnlyRoutes.some(route => pathname.startsWith(route))) {
-    const payload = decodeJwtPayload(authToken!);
+  if (adminOnlyRoutes.some(route => pathname === route || pathname.startsWith(route + '/'))) {
     const hasAdminAccess = Array.isArray(payload?.permissions) &&
       (payload.permissions as string[]).includes('admin');
     if (!hasAdminAccess) {
@@ -78,13 +64,8 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // For the root path, redirect based on authentication status
   if (pathname === "/") {
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/overview", request.url));
-    } else {
-      return NextResponse.redirect(new URL("/auth", request.url));
-    }
+    return NextResponse.redirect(new URL("/overview", request.url));
   }
 
   return NextResponse.next();

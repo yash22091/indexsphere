@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { secureCookies } from '@/lib/cookies';
 import jwt from 'jsonwebtoken';
-import { getDatabase, hashPassword } from '@/lib/database';
+import { getDatabase, hashPassword } from '@/lib/database-sqlite';
 import { getConfig } from '@/lib/config';
 import { BOOT_NONCE } from '@/lib/boot-session';
 
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest) {
     const response = NextResponse.json({ success: true });
     response.cookies.set('auth-token', newToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: secureCookies(),
       sameSite: 'strict',
       maxAge: expiresInSeconds,
       path: '/',

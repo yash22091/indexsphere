@@ -1,106 +1,59 @@
 "use client";
 
-import { Logo } from "@/components/atoms/logo";
-import { ThemeToggle } from "@/components/atoms/theme-toggle";
+import { useState } from "react";
+import { usePathname } from "next/navigation";
+import { PanelLeft, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { useAuth } from "@/contexts/auth-context";
-import { useConnection } from "@/contexts/connection-context";
-import { LogOut, User, Menu, Unplug, Wifi } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import {
+  Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { findNavItem } from "@/constants/navigation";
+import { CommandMenu } from "./command-menu";
 
 interface HeaderProps {
   onMenuClick?: () => void;
-  sidebarOpen?: boolean;
-  title?: string;
 }
 
-export function Header({ onMenuClick, sidebarOpen = false, title }: HeaderProps) {
-  const { user, logout } = useAuth();
-  const { isConnected, disconnect, connectionConfig } = useConnection();
-
-  const handleLogout = () => {
-    logout();
-    window.location.href = "/auth";
-  };
-
-  const handleDisconnect = () => {
-    disconnect();
-    window.location.href = "/connect";
-  };
+export function Header({ onMenuClick }: HeaderProps) {
+  const pathname = usePathname();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const current = findNavItem(pathname);
 
   return (
-    <header className="sticky top-0 z-30 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="flex h-14 items-center justify-between px-4">
-        <div className="flex items-center space-x-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onMenuClick}
-            className="p-2"
-          >
-            <Menu className="h-5 w-5" />
-          </Button>
-          <div className="hidden sm:block">
-            {title ? (
-              <h1 className="text-lg font-semibold">{title}</h1>
-            ) : (
-              <Logo />
-            )}
-          </div>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          {/* Always show auth controls if we have any user or connection */}
-          <div className="flex items-center space-x-2">
-            {user && (
-              <div className="hidden lg:flex items-center space-x-2 text-sm text-muted-foreground">
-                <User className="h-4 w-4" />
-                <span>{user.username}</span>
-                <span className="text-xs bg-secondary px-2 py-1 rounded">
-                  {user.authMethod.toUpperCase()}
-                </span>
-              </div>
-            )}
-            
-            {/* Connection Status & Disconnect Button */}
-            {isConnected && connectionConfig && (
-              <div className="flex items-center space-x-2">
-                <div className="hidden xl:flex items-center space-x-2 text-sm text-muted-foreground">
-                  <Wifi className="h-4 w-4 text-green-500" />
-                  <span className="text-xs">
-                    {connectionConfig.name || new URL(connectionConfig.url).host}
-                  </span>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleDisconnect}
-                  className="text-muted-foreground hover:text-red-500"
-                  title="Disconnect from cluster"
-                >
-                  <Unplug className="h-4 w-4" />
-                  <span className="ml-1 hidden md:inline text-xs">Disconnect</span>
-                </Button>
-              </div>
-            )}
-            
-            {/* Logout Button - Always show if user exists */}
-            {user && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleLogout}
-                className="text-muted-foreground hover:text-red-500"
-                title="Logout from application"
-              >
-                <LogOut className="h-4 w-4" />
-                <span className="ml-1 hidden md:inline text-xs">Logout</span>
-              </Button>
-            )}
-          </div>
-          <ThemeToggle />
-        </div>
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+      <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1" onClick={onMenuClick} aria-label="Toggle sidebar">
+        <PanelLeft className="h-4 w-4" />
+      </Button>
+      <Separator orientation="vertical" className="mr-1 h-4" />
+      <Breadcrumb className="min-w-0">
+        <BreadcrumbList>
+          {current ? (
+            <>
+              <BreadcrumbItem className="hidden md:block text-muted-foreground">{current.group.label}</BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden md:block" />
+              <BreadcrumbItem><BreadcrumbPage className="truncate">{current.item.title}</BreadcrumbPage></BreadcrumbItem>
+            </>
+          ) : (
+            <BreadcrumbItem><BreadcrumbPage>IndexSphere</BreadcrumbPage></BreadcrumbItem>
+          )}
+        </BreadcrumbList>
+      </Breadcrumb>
+
+      <div className="ml-auto">
+        <Button
+          variant="outline"
+          className="h-8 w-9 justify-start gap-2 px-2 text-muted-foreground sm:w-56 sm:px-3"
+          onClick={() => setPaletteOpen(true)}
+        >
+          <Search className="h-4 w-4 shrink-0" />
+          <span className="hidden text-sm font-normal sm:inline">Search…</span>
+          <kbd className="pointer-events-none ml-auto hidden select-none items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium sm:flex">
+            ⌘K
+          </kbd>
+        </Button>
       </div>
+      <CommandMenu open={paletteOpen} onOpenChange={setPaletteOpen} />
     </header>
   );
 }

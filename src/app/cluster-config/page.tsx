@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,11 +9,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
+import Link from "next/link";
 import { useConnection } from "@/contexts/connection-context";
+import { EmptyState, PageHeader, SeverityBadge } from "@/components/app";
 import { getElasticsearchClient } from "@/lib/elasticsearch";
 import {
-  RefreshCw, Loader2, AlertCircle, Link2, FileText,
-  Puzzle, Clock, Archive, FolderOpen, Settings, Search
+  RefreshCw, Loader2, AlertCircle, Database, Search
 } from "lucide-react";
 
 export default function ClusterConfigPage() {
@@ -30,7 +31,7 @@ export default function ClusterConfigPage() {
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [clusterSettings, setClusterSettings] = useState<any>(null);
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     if (!isConnected) return;
     const client = getElasticsearchClient();
     if (!client) return;
@@ -113,56 +114,47 @@ export default function ClusterConfigPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isConnected]);
 
   useEffect(() => {
     if (isConnected) loadAll();
-  }, [isConnected]);
+  }, [isConnected, loadAll]);
 
   const filtered = <T extends Record<string, any>>(items: T[], key: string): T[] =>
     items.filter((i) => (i[key] ?? "").toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-3">
-            <Settings className="h-7 w-7" />
-            Config &amp; Policies
-          </h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Read-only visibility — aliases, templates, ILM/ISM policies, snapshots &amp; cluster settings
-          </p>
-        </div>
-        <Button onClick={loadAll} variant="outline" disabled={!isConnected || loading}>
-          {loading ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
-          Refresh All
-        </Button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Config and policies"
+        description="Read-only view of aliases, index and component templates, lifecycle policies, snapshots and cluster settings."
+        actions={
+          <Button onClick={loadAll} variant="outline" disabled={!isConnected || loading}>
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Refresh
+          </Button>
+        }
+      />
 
       {!isConnected && (
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>Not connected to a cluster. Please connect first.</AlertDescription>
-        </Alert>
+        <EmptyState
+          icon={Database}
+          title="No cluster connected"
+          description="Connect to an Elasticsearch or OpenSearch cluster to view its configuration."
+          action={<Button asChild><Link href="/connections">Go to connections</Link></Button>}
+        />
       )}
       {error && (
-        <Alert className="border-destructive/50 text-destructive">
+        <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* Global filter */}
-      <div className="relative w-64">
-        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+      <div className="relative w-full sm:w-64">
+        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
-          placeholder="Filter by name..."
+          placeholder="Filter by name"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="pl-8"
@@ -170,41 +162,39 @@ export default function ClusterConfigPage() {
       </div>
 
       <Tabs defaultValue="aliases">
-        <TabsList className="flex flex-wrap h-auto gap-1">
+        <TabsList className="h-auto flex-wrap justify-start gap-1">
           <TabsTrigger value="aliases">
             Aliases
-            <Badge variant="outline" className="ml-1.5">{aliases.length}</Badge>
+            <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px] tabular-nums">{aliases.length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="templates">
-            Index Templates
-            <Badge variant="outline" className="ml-1.5">{templates.length}</Badge>
+            Index templates
+            <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px] tabular-nums">{templates.length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="component-templates">
-            Component Templates
-            <Badge variant="outline" className="ml-1.5">{componentTemplates.length}</Badge>
+            Component templates
+            <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px] tabular-nums">{componentTemplates.length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="ilm">
-            ILM / Policies
-            <Badge variant="outline" className="ml-1.5">{ilmPolicies.length}</Badge>
+            Lifecycle policies
+            <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px] tabular-nums">{ilmPolicies.length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="repositories">
             Repositories
-            <Badge variant="outline" className="ml-1.5">{repositories.length}</Badge>
+            <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px] tabular-nums">{repositories.length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="snapshots">
             Snapshots
-            <Badge variant="outline" className="ml-1.5">{snapshots.length}</Badge>
+            <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px] tabular-nums">{snapshots.length}</Badge>
           </TabsTrigger>
-          <TabsTrigger value="settings">Cluster Settings</TabsTrigger>
+          <TabsTrigger value="settings">Cluster settings</TabsTrigger>
         </TabsList>
 
         {/* ── ALIASES ─────────────────────────────────────────────── */}
         <TabsContent value="aliases">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Link2 className="h-4 w-4" /> Aliases
-              </CardTitle>
+              <CardTitle className="text-base">Aliases</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -212,13 +202,13 @@ export default function ClusterConfigPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto"><Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Alias</TableHead>
                       <TableHead>Index</TableHead>
-                      <TableHead>Write Index</TableHead>
-                      <TableHead>Search Routing</TableHead>
+                      <TableHead>Write index</TableHead>
+                      <TableHead>Routing</TableHead>
                       <TableHead>Filter</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -228,18 +218,14 @@ export default function ClusterConfigPage() {
                         <TableCell className="font-medium">{a.alias}</TableCell>
                         <TableCell>{a.index}</TableCell>
                         <TableCell>
-                          {a.is_write_index ? (
-                            <Badge>Yes</Badge>
-                          ) : (
-                            <Badge variant="outline">No</Badge>
-                          )}
+                          {a.is_write_index ? "Yes" : <span className="text-muted-foreground">No</span>}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">
                             {a.routing ?? a.search_routing ?? a.index_routing ?? "—"}
                           </Badge>
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
+                        <TableCell className="max-w-[320px] truncate font-mono text-xs text-muted-foreground">
                           {a.filter ? JSON.stringify(a.filter) : "—"}
                         </TableCell>
                       </TableRow>
@@ -252,7 +238,7 @@ export default function ClusterConfigPage() {
                       </TableRow>
                     )}
                   </TableBody>
-                </Table>
+                </Table></div>
               )}
             </CardContent>
           </Card>
@@ -262,9 +248,7 @@ export default function ClusterConfigPage() {
         <TabsContent value="templates">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-4 w-4" /> Index Templates
-              </CardTitle>
+              <CardTitle className="text-base">Index templates</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -272,13 +256,13 @@ export default function ClusterConfigPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto"><Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
-                      <TableHead>Index Patterns</TableHead>
+                      <TableHead>Index patterns</TableHead>
                       <TableHead>Priority</TableHead>
-                      <TableHead>Composed Of</TableHead>
+                      <TableHead>Composed of</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -308,7 +292,7 @@ export default function ClusterConfigPage() {
                       </TableRow>
                     )}
                   </TableBody>
-                </Table>
+                </Table></div>
               )}
             </CardContent>
           </Card>
@@ -318,9 +302,7 @@ export default function ClusterConfigPage() {
         <TabsContent value="component-templates">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Puzzle className="h-4 w-4" /> Component Templates
-              </CardTitle>
+              <CardTitle className="text-base">Component templates</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -328,7 +310,7 @@ export default function ClusterConfigPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto"><Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
@@ -346,25 +328,13 @@ export default function ClusterConfigPage() {
                           <Badge variant="outline">{t.component_template?.version ?? "—"}</Badge>
                         </TableCell>
                         <TableCell>
-                          {t.component_template?.template?.mappings ? (
-                            <Badge>Yes</Badge>
-                          ) : (
-                            <Badge variant="outline">No</Badge>
-                          )}
+                          {t.component_template?.template?.mappings ? "Yes" : <span className="text-muted-foreground">No</span>}
                         </TableCell>
                         <TableCell>
-                          {t.component_template?.template?.settings ? (
-                            <Badge>Yes</Badge>
-                          ) : (
-                            <Badge variant="outline">No</Badge>
-                          )}
+                          {t.component_template?.template?.settings ? "Yes" : <span className="text-muted-foreground">No</span>}
                         </TableCell>
                         <TableCell>
-                          {t.component_template?.template?.aliases ? (
-                            <Badge>Yes</Badge>
-                          ) : (
-                            <Badge variant="outline">No</Badge>
-                          )}
+                          {t.component_template?.template?.aliases ? "Yes" : <span className="text-muted-foreground">No</span>}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -376,7 +346,7 @@ export default function ClusterConfigPage() {
                       </TableRow>
                     )}
                   </TableBody>
-                </Table>
+                </Table></div>
               )}
             </CardContent>
           </Card>
@@ -386,9 +356,7 @@ export default function ClusterConfigPage() {
         <TabsContent value="ilm">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Clock className="h-4 w-4" /> ILM / ISM Policies
-              </CardTitle>
+              <CardTitle className="text-base">Lifecycle policies (ILM / ISM)</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -396,7 +364,7 @@ export default function ClusterConfigPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto"><Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
@@ -439,7 +407,7 @@ export default function ClusterConfigPage() {
                       </TableRow>
                     )}
                   </TableBody>
-                </Table>
+                </Table></div>
               )}
             </CardContent>
           </Card>
@@ -449,9 +417,7 @@ export default function ClusterConfigPage() {
         <TabsContent value="repositories">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FolderOpen className="h-4 w-4" /> Snapshot Repositories
-              </CardTitle>
+              <CardTitle className="text-base">Snapshot repositories</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -459,12 +425,12 @@ export default function ClusterConfigPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto"><Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Type</TableHead>
-                      <TableHead>Location / Bucket</TableHead>
+                      <TableHead>Location / bucket</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -472,7 +438,7 @@ export default function ClusterConfigPage() {
                       <TableRow key={i}>
                         <TableCell className="font-medium">{r.name}</TableCell>
                         <TableCell>
-                          <Badge>{r.type}</Badge>
+                          <Badge variant="secondary" className="font-normal">{r.type}</Badge>
                         </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
                           {r.settings?.location ?? r.settings?.bucket ?? JSON.stringify(r.settings ?? {})}
@@ -487,7 +453,7 @@ export default function ClusterConfigPage() {
                       </TableRow>
                     )}
                   </TableBody>
-                </Table>
+                </Table></div>
               )}
             </CardContent>
           </Card>
@@ -497,9 +463,7 @@ export default function ClusterConfigPage() {
         <TabsContent value="snapshots">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Archive className="h-4 w-4" /> Snapshots
-              </CardTitle>
+              <CardTitle className="text-base">Snapshots</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -507,14 +471,14 @@ export default function ClusterConfigPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto"><Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Repository</TableHead>
                       <TableHead>State</TableHead>
                       <TableHead>Indices</TableHead>
-                      <TableHead>Start Time</TableHead>
+                      <TableHead>Started</TableHead>
                       <TableHead>Duration</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -526,17 +490,9 @@ export default function ClusterConfigPage() {
                           <Badge variant="outline">{s.repository}</Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge
-                            variant={
-                              s.state === "SUCCESS"
-                                ? "default"
-                                : s.state === "FAILED"
-                                ? "destructive"
-                                : "secondary"
-                            }
-                          >
-                            {s.state}
-                          </Badge>
+                          <SeverityBadge level={s.state === "SUCCESS" ? "ok" : s.state === "FAILED" ? "high" : s.state === "PARTIAL" ? "warning" : "info"}>
+                            {String(s.state ?? "").toLowerCase()}
+                          </SeverityBadge>
                         </TableCell>
                         <TableCell>{s.indices?.length ?? 0}</TableCell>
                         <TableCell className="text-xs">{s.start_time ?? "—"}</TableCell>
@@ -555,7 +511,7 @@ export default function ClusterConfigPage() {
                       </TableRow>
                     )}
                   </TableBody>
-                </Table>
+                </Table></div>
               )}
             </CardContent>
           </Card>
@@ -566,7 +522,7 @@ export default function ClusterConfigPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>Persistent Settings</CardTitle>
+                <CardTitle className="text-base">Persistent settings</CardTitle>
               </CardHeader>
               <CardContent>
                 <Textarea
@@ -579,7 +535,7 @@ export default function ClusterConfigPage() {
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Transient Settings</CardTitle>
+                <CardTitle className="text-base">Transient settings</CardTitle>
               </CardHeader>
               <CardContent>
                 <Textarea

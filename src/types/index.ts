@@ -25,6 +25,8 @@ export interface ElasticsearchConnectionConfig {
   headers?: Record<string, string>;
   name?: string;
   type?: 'elasticsearch' | 'opensearch';
+  /** Verify the cluster's TLS certificate (server-side only). Default false for self-signed on-prem certs. */
+  verifyTls?: boolean;
 }
 
 export interface ApiResponse<T = unknown> {

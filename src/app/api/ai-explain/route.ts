@@ -5,6 +5,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest } from "@/lib/auth";
+import { assertSafeOutboundUrl } from "@/lib/url-guard";
 
 const SYSTEM_PROMPT = `You are an expert Elasticsearch/OpenSearch performance engineer.
 The user will provide raw data from their cluster (query profiles, slow query output, mappings, allocation explain, etc.).
@@ -57,7 +58,12 @@ export async function POST(request: NextRequest) {
       provider === "custom" ? endpoint?.replace(/\/$/, "") :
       "https://api.openai.com/v1";
 
+    if (!baseUrl) return NextResponse.json({ error: "endpoint is required for this provider" }, { status: 400 });
+    // User-supplied endpoint: block metadata/link-local destinations
+    await assertSafeOutboundUrl(baseUrl);
+
     const resp = await fetch(`${baseUrl}/chat/completions`, {
+      redirect: "error",
       method: "POST",
       headers: {
         "Content-Type": "application/json",

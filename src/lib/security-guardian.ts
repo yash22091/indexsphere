@@ -181,7 +181,6 @@ export function isDevToolsOpen(): boolean {
   // When DevTools is open the engine pauses for the debugger; this adds ≥1 ms.
   // We use a very tight loop so it's imperceptible when DevTools is closed.
   const t0 = performance.now();
-  // eslint-disable-next-line no-debugger
   debugger;
   if (performance.now() - t0 > 80) return true;
 

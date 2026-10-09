@@ -1,34 +1,32 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import Link from "next/link";
+import { EmptyState, HealthBadge, PageHeader, StatCard, StatGrid } from "@/components/app";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnection } from "@/contexts/connection-context";
 import { getElasticsearchClient } from "@/lib/elasticsearch";
-import { 
-  Database,
-  Search,
-  Filter,
-  RefreshCw,
+import {
   AlertCircle,
-  CheckCircle,
-  Clock,
   BarChart3,
-  HardDrive,
-  FileText,
-  Loader2,
+  CheckCircle,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Database,
+  FileText,
+  Loader2,
+  RefreshCw,
+  Search,
 } from "lucide-react";
 
 interface IndexDetails {
@@ -45,7 +43,7 @@ interface IndexDetails {
 }
 
 // Template reliability evaluation functions
-const evaluateTemplateReliability = (template: any, index: IndexDetails): string => {
+const evaluateTemplateReliability = (template: any, _index: IndexDetails): string => {
   let score = 0;
   let maxScore = 0;
 
@@ -106,21 +104,11 @@ const getReliabilityScore = (reliability: string): number => {
 
 const getReliabilityColor = (reliability: string): string => {
   switch (reliability) {
-    case 'excellent': return 'text-green-600';
-    case 'good': return 'text-blue-600';
-    case 'fair': return 'text-yellow-600';
-    case 'poor': return 'text-red-600';
-    default: return 'text-gray-600';
-  }
-};
-
-const getReliabilityBadge = (reliability: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-  switch (reliability) {
-    case 'excellent': return 'default';
-    case 'good': return 'secondary';
-    case 'fair': return 'outline';
-    case 'poor': return 'destructive';
-    default: return 'outline';
+    case 'excellent': return 'text-success';
+    case 'good': return 'text-foreground';
+    case 'fair': return 'text-warning';
+    case 'poor': return 'text-destructive';
+    default: return 'text-muted-foreground';
   }
 };
 
@@ -200,11 +188,11 @@ export default function IndicesPage() {
   const [totalPages, setTotalPages] = useState(1);
   
   // Template information
-  const [templates, setTemplates] = useState<any[]>([]);
+  const [, setTemplates] = useState<any[]>([]);
   const [indexTemplateMap, setIndexTemplateMap] = useState<{[key: string]: Array<{name: string, type: string, reliability: string, score: number}>}>({});
 
   // Load indices from Elasticsearch/OpenSearch
-  const loadIndices = async () => {
+  const loadIndices = useCallback(async () => {
     if (!isConnected) {
       setError("Not connected to cluster");
       return;
@@ -343,7 +331,7 @@ export default function IndicesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isConnected]);
 
   // Load detailed index information
   const loadIndexDetails = async (indexName: string) => {
@@ -367,7 +355,7 @@ export default function IndicesPage() {
       setIndices([]);
       setSelectedIndex(null);
     }
-  }, [isConnected]);
+  }, [isConnected, loadIndices]);
 
   const filteredIndices = indices.filter(index =>
     index.index.toLowerCase().includes(searchQuery.toLowerCase())
@@ -405,19 +393,6 @@ export default function IndicesPage() {
   
   const healthyIndices = indices.filter(idx => idx.health === "green").length;
 
-  const getStatusIcon = (health: string) => {
-    switch (health) {
-      case "green":
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case "yellow":
-        return <AlertCircle className="h-4 w-4 text-yellow-600" />;
-      case "red":
-        return <AlertCircle className="h-4 w-4 text-red-600" />;
-      default:
-        return <Clock className="h-4 w-4 text-gray-600" />;
-    }
-  };
-
   const formatBytes = (bytes: string) => {
     if (!bytes || bytes === "0b") return "0 B";
     return bytes;
@@ -434,117 +409,62 @@ export default function IndicesPage() {
     loadIndexDetails(index.index);
   };
 
+  const avgPrimaries = indices.length > 0 ? Math.round(indices.reduce((acc, idx) => acc + parseInt(idx.pri || "0"), 0) / indices.length) : 0;
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold flex items-center">
-            <Database className="h-6 w-6 sm:h-8 sm:w-8 mr-2 sm:mr-3" />
-            Indices
-          </h1>
-          <p className="text-muted-foreground mt-1 sm:mt-2 text-sm sm:text-base">
-            Monitor health and status of your Elasticsearch indices
-          </p>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-2 sm:space-x-2">
-          <Button 
-            onClick={loadIndices} 
-            variant="outline"
-            disabled={!isConnected || loading}
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
+    <div className="space-y-6">
+      <PageHeader
+        title="Indices"
+        description="Health, size and shard layout of every index. Select an index for its settings and mappings."
+        actions={
+          <Button size="sm" variant="outline" onClick={loadIndices} disabled={!isConnected || loading}>
+            {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
             Refresh
           </Button>
-        </div>
-      </div>
+        }
+      />
 
-      {/* Connection Status & Error Messages */}
       {!isConnected && (
-        <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-400">
-          <Database className="h-4 w-4" />
-          <AlertDescription>
-            Not connected to cluster. Please connect first to view indices.
-          </AlertDescription>
-        </Alert>
+        <EmptyState
+          icon={Database}
+          title="No cluster connected"
+          description="Connect to an Elasticsearch or OpenSearch cluster to browse its indices."
+          action={<Button size="sm" asChild><Link href="/connections">Go to connections</Link></Button>}
+        />
       )}
 
-      {error && (
-        <Alert className="border-destructive/50 text-destructive">
+      {error && isConnected && (
+        <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* Statistics Cards */}
       {isConnected && (
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2">
-                <Database className="h-8 w-8 text-blue-500" />
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Indices</p>
-                  <p className="text-2xl font-bold">{indices.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2">
-                <FileText className="h-8 w-8 text-green-500" />
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Documents</p>
-                  <p className="text-2xl font-bold">{totalDocuments.toLocaleString()}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2">
-                <CheckCircle className="h-8 w-8 text-green-500" />
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Healthy Indices</p>
-                  <p className="text-2xl font-bold">{healthyIndices}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2">
-                <BarChart3 className="h-8 w-8 text-purple-500" />
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Avg. Shards</p>
-                  <p className="text-2xl font-bold">
-                    {indices.length > 0 ? Math.round(indices.reduce((acc, idx) => acc + parseInt(idx.pri || "0"), 0) / indices.length) : 0}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <StatGrid>
+          <StatCard label="Indices" icon={Database} value={indices.length.toLocaleString()} />
+          <StatCard label="Documents" icon={FileText} value={totalDocuments.toLocaleString()} />
+          <StatCard
+            label="Healthy indices"
+            icon={CheckCircle}
+            value={healthyIndices.toLocaleString()}
+            hint={indices.length ? `${indices.length - healthyIndices} yellow or red` : undefined}
+            tone={indices.length && healthyIndices < indices.length ? "warning" : "default"}
+          />
+          <StatCard label="Average primaries" icon={BarChart3} value={avgPrimaries} hint="primary shards per index" />
+        </StatGrid>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Indices List */}
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Indices ({filteredIndices.length})</CardTitle>
-              <div className="flex flex-col sm:flex-row gap-4">
+      {isConnected && (
+        <div className="grid gap-6 xl:grid-cols-3">
+          <Card className="min-w-0 xl:col-span-2">
+            <CardHeader className="space-y-3">
+              <CardTitle className="text-base">Indices ({filteredIndices.length})</CardTitle>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <div className="relative flex-1">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Search indices..."
+                    placeholder="Filter indices"
                     value={searchQuery}
                     onChange={(e) => {
                       setSearchQuery(e.target.value);
@@ -554,7 +474,7 @@ export default function IndicesPage() {
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Show:</span>
+                  <span className="text-sm text-muted-foreground">Rows</span>
                   <Select value={itemsPerPage.toString()} onValueChange={(value) => {
                     setItemsPerPage(parseInt(value));
                     setCurrentPage(1); // Reset to first page when changing items per page
@@ -573,152 +493,106 @@ export default function IndicesPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {loading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                  <span>Loading indices...</span>
+              {loading && indices.length === 0 ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
                 </div>
               ) : filteredIndices.length === 0 ? (
-                <div className="text-center py-8">
-                  <Database className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">
-                    {isConnected ? "No indices found" : "Connect to cluster to view indices"}
-                  </p>
-                </div>
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  {indices.length ? "No indices match the filter." : "This cluster has no indices."}
+                </p>
               ) : (
                 <div>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Health</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Documents</TableHead>
-                        <TableHead>Size</TableHead>
-                        <TableHead>Shards</TableHead>
-                        <TableHead>Templates</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {paginatedIndices.map((index) => (
-                        <TableRow 
-                          key={index.index} 
-                          className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => handleRowClick(index)}
-                        >
-                          <TableCell className="font-medium">{index.index}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center space-x-2">
-                              {getStatusIcon(index.health)}
-                              <Badge 
-                                variant={index.health === "green" ? "default" : index.health === "yellow" ? "secondary" : "destructive"}
-                              >
-                                {index.health}
-                              </Badge>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{index.status}</Badge>
-                          </TableCell>
-                          <TableCell>{formatNumber(index["docs.count"])}</TableCell>
-                          <TableCell>{formatBytes(index["store.size"])}</TableCell>
-                          <TableCell>{index.pri}p / {index.rep}r</TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              {indexTemplateMap[index.index]?.length > 0 ? (
-                                indexTemplateMap[index.index].slice(0, 2).map((template, i) => (
-                                  <div key={i} className="flex items-center gap-1">
-                                    <Badge 
-                                      variant={getReliabilityBadge(template.reliability)} 
-                                      className={`text-xs ${getReliabilityColor(template.reliability)}`}
-                                    >
+                  <div className="overflow-x-auto rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Health</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Documents</TableHead>
+                          <TableHead className="text-right">Size</TableHead>
+                          <TableHead>Shards</TableHead>
+                          <TableHead>Templates</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {paginatedIndices.map((index) => (
+                          <TableRow
+                            key={index.index}
+                            className="cursor-pointer"
+                            data-state={selectedIndex?.index === index.index ? "selected" : undefined}
+                            onClick={() => handleRowClick(index)}
+                          >
+                            <TableCell className="max-w-[280px] truncate font-medium" title={index.index}>{index.index}</TableCell>
+                            <TableCell><HealthBadge status={index.health} /></TableCell>
+                            <TableCell className="text-muted-foreground">{index.status}</TableCell>
+                            <TableCell className="text-right">{formatNumber(index["docs.count"])}</TableCell>
+                            <TableCell className="text-right">{formatBytes(index["store.size"])}</TableCell>
+                            <TableCell className="text-muted-foreground">{index.pri}p / {index.rep}r</TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap gap-1">
+                                {indexTemplateMap[index.index]?.length > 0 ? (
+                                  indexTemplateMap[index.index].slice(0, 2).map((template, i) => (
+                                    <Badge key={i} variant="outline" className="font-normal" title={`Match: ${template.reliability}`}>
                                       {template.name}
                                     </Badge>
-                                    <span className={`text-xs ${getReliabilityColor(template.reliability)}`}>
-                                      ({template.reliability})
-                                    </span>
-                                  </div>
-                                ))
-                              ) : (
-                                <span className="text-xs text-muted-foreground">No templates</span>
-                              )}
-                              {indexTemplateMap[index.index]?.length > 2 && (
-                                <Badge variant="outline" className="text-xs">
-                                  +{indexTemplateMap[index.index].length - 2} more
-                                </Badge>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  
-                  {/* Pagination Controls */}
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">None</span>
+                                )}
+                                {indexTemplateMap[index.index]?.length > 2 && (
+                                  <Badge variant="secondary" className="font-normal">
+                                    +{indexTemplateMap[index.index].length - 2}
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
                   {totalPages > 1 && (
-                    <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="text-sm text-muted-foreground">
-                        Showing {startIndex + 1} to {Math.min(endIndex, totalItems)} of {totalItems} indices
+                        {startIndex + 1}–{Math.min(endIndex, totalItems)} of {totalItems}
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={goToFirstPage}
-                          disabled={currentPage === 1}
-                        >
+                      <div className="flex items-center gap-1">
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={goToFirstPage} disabled={currentPage === 1} aria-label="First page">
                           <ChevronsLeft className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={goToPreviousPage}
-                          disabled={currentPage === 1}
-                        >
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={goToPreviousPage} disabled={currentPage === 1} aria-label="Previous page">
                           <ChevronLeft className="h-4 w-4" />
                         </Button>
-                        
-                        <div className="flex items-center space-x-1">
-                          {[...Array(Math.min(5, totalPages))].map((_, index) => {
-                            let pageNumber;
-                            if (totalPages <= 5) {
-                              pageNumber = index + 1;
-                            } else if (currentPage <= 3) {
-                              pageNumber = index + 1;
-                            } else if (currentPage >= totalPages - 2) {
-                              pageNumber = totalPages - 4 + index;
-                            } else {
-                              pageNumber = currentPage - 2 + index;
-                            }
-                            
-                            return (
-                              <Button
-                                key={pageNumber}
-                                variant={currentPage === pageNumber ? "default" : "outline"}
-                                size="sm"
-                                onClick={() => goToPage(pageNumber)}
-                                className="w-8 h-8 p-0"
-                              >
-                                {pageNumber}
-                              </Button>
-                            );
-                          })}
-                        </div>
-                        
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={goToNextPage}
-                          disabled={currentPage === totalPages}
-                        >
+                        {[...Array(Math.min(5, totalPages))].map((_, index) => {
+                          let pageNumber;
+                          if (totalPages <= 5) {
+                            pageNumber = index + 1;
+                          } else if (currentPage <= 3) {
+                            pageNumber = index + 1;
+                          } else if (currentPage >= totalPages - 2) {
+                            pageNumber = totalPages - 4 + index;
+                          } else {
+                            pageNumber = currentPage - 2 + index;
+                          }
+                          return (
+                            <Button
+                              key={pageNumber}
+                              variant={currentPage === pageNumber ? "default" : "outline"}
+                              size="icon"
+                              onClick={() => goToPage(pageNumber)}
+                              className="h-8 w-8"
+                            >
+                              {pageNumber}
+                            </Button>
+                          );
+                        })}
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={goToNextPage} disabled={currentPage === totalPages} aria-label="Next page">
                           <ChevronRight className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={goToLastPage}
-                          disabled={currentPage === totalPages}
-                        >
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={goToLastPage} disabled={currentPage === totalPages} aria-label="Last page">
                           <ChevronsRight className="h-4 w-4" />
                         </Button>
                       </div>
@@ -728,146 +602,93 @@ export default function IndicesPage() {
               )}
             </CardContent>
           </Card>
-        </div>
 
-        {/* Index Details */}
-        <div className="lg:col-span-1">
-          {selectedIndex ? (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  {selectedIndex.index}
-                  <Badge className="ml-2" variant={selectedIndex.health === "green" ? "default" : "destructive"}>
-                    {selectedIndex.health}
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Tabs defaultValue="overview">
-                  <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="overview">Overview</TabsTrigger>
-                    <TabsTrigger value="settings">Settings</TabsTrigger>
-                    <TabsTrigger value="mappings">Mappings</TabsTrigger>
-                  </TabsList>
+          <div className="min-w-0">
+            {selectedIndex ? (
+              <Card>
+                <CardHeader className="space-y-2">
+                  <CardTitle className="break-all text-base">{selectedIndex.index}</CardTitle>
+                  <div><HealthBadge status={selectedIndex.health} /></div>
+                </CardHeader>
+                <CardContent>
+                  <Tabs defaultValue="overview">
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="overview">Overview</TabsTrigger>
+                      <TabsTrigger value="settings">Settings</TabsTrigger>
+                      <TabsTrigger value="mappings">Mappings</TabsTrigger>
+                    </TabsList>
 
-                  <TabsContent value="overview" className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label>Documents</Label>
-                        <p className="text-sm font-medium mt-1">{formatNumber(selectedIndex["docs.count"])}</p>
-                      </div>
-                      <div>
-                        <Label>Size</Label>
-                        <p className="text-sm font-medium mt-1">{formatBytes(selectedIndex["store.size"])}</p>
-                      </div>
-                      <div>
-                        <Label>Primary Shards</Label>
-                        <p className="text-sm font-medium mt-1">{selectedIndex.pri}</p>
-                      </div>
-                      <div>
-                        <Label>Replica Shards</Label>
-                        <p className="text-sm font-medium mt-1">{selectedIndex.rep}</p>
-                      </div>
-                      <div>
-                        <Label>Status</Label>
-                        <p className="text-sm font-medium mt-1">{selectedIndex.status}</p>
-                      </div>
-                      <div>
-                        <Label>UUID</Label>
-                        <p className="text-xs font-mono mt-1 break-all">{selectedIndex.uuid}</p>
-                      </div>
-                    </div>
-                    
-                    {/* Templates Section */}
-                    <div className="mt-6">
-                      <Label>Applied Templates</Label>
-                      <div className="mt-2 space-y-2">
+                    <TabsContent value="overview" className="space-y-6 pt-4">
+                      <dl className="grid grid-cols-2 gap-4 text-sm">
+                        <Detail label="Documents" value={formatNumber(selectedIndex["docs.count"])} />
+                        <Detail label="Size" value={formatBytes(selectedIndex["store.size"])} />
+                        <Detail label="Primary shards" value={selectedIndex.pri} />
+                        <Detail label="Replica shards" value={selectedIndex.rep} />
+                        <Detail label="Status" value={selectedIndex.status} />
+                        <div className="col-span-2 space-y-1">
+                          <dt className="text-muted-foreground">UUID</dt>
+                          <dd className="break-all font-mono text-xs">{selectedIndex.uuid}</dd>
+                        </div>
+                      </dl>
+
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium">Matching templates</h4>
                         {indexTemplateMap[selectedIndex.index]?.length > 0 ? (
-                          indexTemplateMap[selectedIndex.index].map((template, i) => (
-                            <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
-                              <div className="flex items-center gap-3">
-                                <Badge 
-                                  variant={getReliabilityBadge(template.reliability)}
-                                  className={getReliabilityColor(template.reliability)}
-                                >
-                                  {template.name}
-                                </Badge>
-                                <Badge variant="outline" className="text-xs">
-                                  {template.type.replace('_', ' ')}
-                                </Badge>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className={`text-sm font-medium ${getReliabilityColor(template.reliability)}`}>
-                                  {template.reliability.charAt(0).toUpperCase() + template.reliability.slice(1)}
-                                </span>
-                                <div className="flex">
-                                  {[...Array(4)].map((_, starIndex) => (
-                                    <span
-                                      key={starIndex}
-                                      className={`text-sm ${
-                                        starIndex < template.score
-                                          ? getReliabilityColor(template.reliability)
-                                          : 'text-gray-300'
-                                      }`}
-                                    >
-                                      ★
-                                    </span>
-                                  ))}
+                          <ul className="divide-y rounded-md border">
+                            {indexTemplateMap[selectedIndex.index].map((template, i) => (
+                              <li key={i} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                                <div className="min-w-0">
+                                  <div className="truncate font-medium">{template.name}</div>
+                                  <div className="text-xs text-muted-foreground">{template.type.replace('_', ' ')}</div>
                                 </div>
-                              </div>
-                            </div>
-                          ))
+                                <span className={`text-xs ${getReliabilityColor(template.reliability)}`}>
+                                  {template.reliability.charAt(0).toUpperCase() + template.reliability.slice(1)} match
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
                         ) : (
-                          <p className="text-sm text-muted-foreground py-3 px-4 border rounded-lg bg-muted/20">
-                            No templates applied to this index
+                          <p className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                            No templates match this index.
                           </p>
                         )}
                       </div>
-                    </div>
-                  </TabsContent>
+                    </TabsContent>
 
-                  <TabsContent value="settings">
-                    <div className="space-y-4">
-                      <Label>Index Settings</Label>
-                      <Textarea
-                        value={JSON.stringify(indexSettings || {}, null, 2)}
-                        rows={12}
-                        readOnly
-                        className="font-mono text-sm"
-                      />
-                    </div>
-                  </TabsContent>
+                    <TabsContent value="settings" className="pt-4">
+                      <pre className="max-h-[480px] overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
+                        {JSON.stringify(indexSettings || {}, null, 2)}
+                      </pre>
+                    </TabsContent>
 
-                  <TabsContent value="mappings">
-                    <div className="space-y-4">
-                      <Label>Field Mappings</Label>
-                      <Textarea
-                        value={JSON.stringify(indexMappings || {}, null, 2)}
-                        rows={12}
-                        readOnly
-                        className="font-mono text-sm"
-                      />
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="flex items-center justify-center h-64">
-                <div className="text-center">
-                  <Database className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                  <p className="text-lg font-medium">No Index Selected</p>
-                  <p className="text-muted-foreground">
-                    Click on an index to view its details
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                    <TabsContent value="mappings" className="pt-4">
+                      <pre className="max-h-[480px] overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
+                        {JSON.stringify(indexMappings || {}, null, 2)}
+                      </pre>
+                    </TabsContent>
+                  </Tabs>
+                </CardContent>
+              </Card>
+            ) : (
+              <EmptyState
+                icon={Database}
+                title="No index selected"
+                description="Select an index to see its details, settings and mappings."
+                className="min-h-64"
+              />
+            )}
+          </div>
         </div>
-      </div>
+      )}
+    </div>
+  );
+}
 
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-1">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="font-medium tabular-nums">{value}</dd>
     </div>
   );
 }

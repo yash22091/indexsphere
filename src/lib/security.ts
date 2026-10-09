@@ -193,7 +193,7 @@ class SecurityManager {
     this.userLockouts.delete(username);
     
     // Also clear their failed attempts
-    for (const [key, attempts] of this.loginAttempts.entries()) {
+    for (const key of this.loginAttempts.keys()) {
       if (key.includes(username)) {
         this.loginAttempts.delete(key);
       }

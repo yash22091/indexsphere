@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { secureCookies } from '@/lib/cookies';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { getDatabase } from '@/lib/database';
+import { getDatabase } from '@/lib/database-sqlite';
 import { getConfig } from '@/lib/config';
 import debugLog from '@/lib/debug';
 import securityManager from '@/lib/security';
@@ -127,7 +128,7 @@ export async function POST(request: NextRequest) {
     const maxAge = config.security.sessionTimeout * 60; // Convert minutes to seconds
     response.cookies.set('auth-token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: secureCookies(),
       sameSite: 'strict',
       maxAge: maxAge,
       path: '/',

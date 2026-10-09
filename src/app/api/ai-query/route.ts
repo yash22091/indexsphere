@@ -11,7 +11,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { getDatabase } from '@/lib/database-sqlite';
-import { getElasticsearchClient } from '@/lib/elasticsearch';
+import { getClusterSession } from '@/lib/cluster-session';
+import { isEsRequestAllowed } from '@/lib/es-permissions';
+import { assertSafeOutboundUrl, parseOutboundUrl } from '@/lib/url-guard';
 
 export async function POST(request: NextRequest) {
   const user = getUserFromRequest(request);
@@ -55,9 +57,10 @@ export async function POST(request: NextRequest) {
   let mappingContext = '';
   if (index) {
     try {
-      const client = getElasticsearchClient();
-      if (client) {
-        const mapping = await client.getIndexMapping(index);
+      const client = getClusterSession(user.id)?.client;
+      const mappingPath = `/${encodeURIComponent(index)}/_mapping`;
+      if (client && isEsRequestAllowed(user.role, 'GET', mappingPath)) {
+        const mapping = await client.getIndexMapping(encodeURIComponent(index));
         const props = (mapping as Record<string, unknown>)[index] as Record<string, unknown> ?? {};
         const mappings = (props.mappings ?? (Object.values(mapping as object)[0] as Record<string, unknown>)?.mappings ?? {}) as Record<string, unknown>;
         const fields = Object.keys((mappings.properties as Record<string, unknown>) ?? {}).slice(0, 30);
@@ -79,6 +82,8 @@ Rules:
     : `Convert to DSL: ${naturalLanguage}`;
 
   try {
+    // The LLM endpoint is user-controlled: block metadata/link-local destinations
+    await assertSafeOutboundUrl(resolvedBaseUrl);
     let raw: string;
 
     if (resolvedFormat === 'anthropic') {
@@ -97,6 +102,7 @@ Rules:
           messages: [{ role: 'user', content: userPrompt }],
         }),
         signal: AbortSignal.timeout(30000),
+        redirect: 'error',
       });
       if (!resp.ok) {
         const errText = await resp.text();
@@ -122,6 +128,7 @@ Rules:
           max_tokens: 1000,
         }),
         signal: AbortSignal.timeout(30000),
+        redirect: 'error',
       });
       if (!resp.ok) {
         const errText = await resp.text();
@@ -171,9 +178,18 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   const user = getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  // Global default for every user — whoever controls it receives other users' API keys
+  if (user.role !== 'admin') return NextResponse.json({ error: 'Admin required' }, { status: 403 });
 
   const body = await request.json();
   const db = getDatabase();
+  if (body.baseUrl) {
+    try {
+      parseOutboundUrl(body.baseUrl);
+    } catch (err) {
+      return NextResponse.json({ error: err instanceof Error ? err.message : 'Invalid URL' }, { status: 400 });
+    }
+  }
   // Deliberately omit apiKey — it must never be stored server-side
   if (body.baseUrl) db.setSetting('ai_base_url', body.baseUrl);
   if (body.model)   db.setSetting('ai_model',    body.model);

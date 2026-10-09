@@ -1,0 +1,15 @@
+# Keep the build context small and free of local state/secrets
+node_modules
+.next
+.git
+data
+certs/*.pem
+logs
+*.log
+.env
+.env.*
+coverage
+tests
+docs
+*.md
+!README.md

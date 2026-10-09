@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getElasticsearchClient } from '@/lib/elasticsearch';
+import { requireClusterAccess } from '@/lib/cluster-session';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const ctx = requireClusterAccess(request, 'GET', '/_cat/indices');
+  if (ctx instanceof NextResponse) return ctx;
+
   try {
-    const client = getElasticsearchClient();
-    if (!client) {
-      return NextResponse.json(
-        { error: 'No Elasticsearch client available. Please connect first.' },
-        { status: 400 }
-      );
-    }
-
-    const indices = await client.getIndices();
+    const indices = await ctx.session.client.getIndices();
     return NextResponse.json(indices);
   } catch (error: any) {
     console.error('Error fetching indices:', error);

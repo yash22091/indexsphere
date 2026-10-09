@@ -1,600 +1,309 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { EmptyState, PageHeader, StatCard, StatGrid } from "@/components/app";
 import { useConnection } from "@/contexts/connection-context";
 import { getElasticsearchClient } from "@/lib/elasticsearch";
-import { 
-  BarChart3, 
-  Activity, 
-  Clock, 
-  TrendingUp,
-  TrendingDown,
-  RefreshCw,
-  Search,
-  AlertCircle,
-  CheckCircle,
-  Database,
-  Loader2,
-  Zap,
-  Monitor,
-  Timer,
-  BarChart,
-  LineChart,
-  Target,
-  Gauge
-} from "lucide-react";
+import { Activity, AlertCircle, Clock, Database, FileInput, Loader2, RefreshCw, Search, Timer } from "lucide-react";
 
-interface SearchMetrics {
-  totalQueries: number;
-  avgQueryTime: number;
-  slowQueries: number;
-  failedQueries: number;
-  indexingRate: number;
-  searchRate: number;
-  currentEPS: number;
-  peakEPS: number;
-  lastUpdate: string;
+/** Cumulative counters from one sample; rates are computed from two consecutive samples. */
+interface Totals {
+  at: number;
+  queryTotal: number;
+  queryTimeMs: number;
+  fetchTotal: number;
+  fetchTimeMs: number;
+  queryCurrent: number;
+  indexTotal: number;
+  indexTimeMs: number;
+  perIndex: Record<string, { indexTotal: number; queryTotal: number }>;
 }
 
-interface IndexingStats {
-  indexName: string;
-  docsPerSecond: number;
-  totalDocs: number;
+interface IndexRow {
+  name: string;
+  docs: number;
+  sizeBytes: number;
   indexingCurrent: number;
-  deleteCurrent: number;
-  totalSize: string;
+  queryTotal: number;
+  indexRate: number | null;
+  searchRate: number | null;
 }
 
-interface QueryAnalytics {
-  queryType: string;
-  count: number;
-  avgLatency: number;
-  p95Latency: number;
-  errors: number;
+interface Derived {
+  searchRate: number | null;     // queries/s over the last interval
+  indexRate: number | null;      // docs/s over the last interval
+  intervalLatency: number | null; // avg ms per query over the last interval
+  avgLatency: number;            // avg ms per query since node start
+  avgFetch: number;
+  queryCurrent: number;
+  queryTotal: number;
+  indexTotal: number;
+  updatedAt: string;
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+
+function formatRate(v: number | null, unit: string) {
+  return v === null ? "—" : `${v < 10 ? v.toFixed(1) : Math.round(v).toLocaleString()} ${unit}`;
 }
 
 export default function SearchAnalyticsPage() {
   const { isConnected } = useConnection();
-  const [metrics, setMetrics] = useState<SearchMetrics | null>(null);
-  const [indexingStats, setIndexingStats] = useState<IndexingStats[]>([]);
-  const [queryAnalytics, setQueryAnalytics] = useState<QueryAnalytics[]>([]);
+  const [derived, setDerived] = useState<Derived | null>(null);
+  const [rows, setRows] = useState<IndexRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [refreshInterval, setRefreshInterval] = useState<number>(5000);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const [timeRange, setTimeRange] = useState("5m");
+  const [refreshInterval, setRefreshInterval] = useState(10_000);
+  const [filter, setFilter] = useState("");
+  const prev = useRef<Totals | null>(null);
+  const inFlight = useRef(false);
 
-  // Auto-refresh logic
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (autoRefresh && isConnected) {
-      interval = setInterval(() => {
-        loadSearchMetrics();
-      }, refreshInterval);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [autoRefresh, refreshInterval, isConnected]);
-
-  // Reload data when time range changes
-  useEffect(() => {
-    if (isConnected) {
-      loadSearchMetrics();
-    }
-  }, [timeRange, isConnected]);
-
-  // Load search metrics and EPS calculation
-  const loadSearchMetrics = useCallback(async () => {
-    if (!isConnected) {
-      setError("Not connected to cluster");
-      return;
-    }
-
+  const load = useCallback(async () => {
+    if (!isConnected || inFlight.current) return;
     const client = getElasticsearchClient();
-    if (!client) {
-      setError("No client available");
-      return;
-    }
-
+    if (!client) { setError("No cluster client available. Reconnect and try again."); return; }
+    inFlight.current = true;
     setLoading(true);
     setError(null);
-    
     try {
-      // Get cluster stats for search metrics
-      const [clusterStats, nodeStats, indicesStats] = await Promise.all([
-        client.request('/_cluster/stats'),
-        client.request('/_nodes/stats/indices'),
-        client.request('/_stats/indexing,search,docs')
+      const [nodeStats, indicesStats] = await Promise.all([
+        client.request("/_nodes/stats/indices/search,indexing"),
+        client.request("/_stats/indexing,search,docs,store"),
       ]);
 
-      // Calculate EPS from search stats
-      const searchStats = clusterStats.indices?.search || {};
-      const indexingStatsData = clusterStats.indices?.indexing || {};
-      
-      // Calculate realistic EPS from node stats
-      let totalQueryCount = 0;
-      let totalIndexingCount = 0;
-      let totalQueryTime = 0;
-      let slowQueries = 0;
-      let failedQueries = 0;
-
-      if (nodeStats.nodes) {
-        Object.values(nodeStats.nodes).forEach((node: any) => {
-          const search = node.indices?.search || {};
-          const indexing = node.indices?.indexing || {};
-          
-          totalQueryCount += search.query_total || 0;
-          totalIndexingCount += indexing.index_total || 0;
-          totalQueryTime += search.query_time_in_millis || 0;
-          slowQueries += search.query_current || 0;
-          failedQueries += search.fetch_total || 0;
-        });
+      const t: Totals = {
+        at: Date.now(), queryTotal: 0, queryTimeMs: 0, fetchTotal: 0, fetchTimeMs: 0,
+        queryCurrent: 0, indexTotal: 0, indexTimeMs: 0, perIndex: {},
+      };
+      for (const node of Object.values((nodeStats?.nodes ?? {}) as Record<string, any>)) {
+        const sx = node.indices?.search ?? {};
+        const ix = node.indices?.indexing ?? {};
+        t.queryTotal += sx.query_total ?? 0;
+        t.queryTimeMs += sx.query_time_in_millis ?? 0;
+        t.fetchTotal += sx.fetch_total ?? 0;
+        t.fetchTimeMs += sx.fetch_time_in_millis ?? 0;
+        t.queryCurrent += sx.query_current ?? 0;
+        t.indexTotal += ix.index_total ?? 0;
+        t.indexTimeMs += ix.index_time_in_millis ?? 0;
       }
 
-      // Use more realistic rate calculations based on time range
-      // For demo purposes, simulate realistic rates based on cluster activity
-      const clusterUptime = Math.max(1, (Date.now() - (clusterStats.timestamp || Date.now() - 3600000)) / 1000);
-      
-      // Time range multipliers for scaling data
-      const timeMultipliers: { [key: string]: number } = {
-        "1m": 0.1,
-        "5m": 0.5,
-        "15m": 1,
-        "1h": 2,
-        "24h": 10
-      };
-      const multiplier = timeMultipliers[timeRange] || 1;
-      
-      // Calculate realistic per-second rates (much more conservative)
-      const baseSearchRate = Math.min(50, Math.round((totalQueryCount * multiplier) / Math.max(clusterUptime, 3600))); // Max 50/sec
-      const baseIndexingRate = Math.min(200, Math.round((totalIndexingCount * multiplier) / Math.max(clusterUptime, 3600))); // Max 200/sec
-      
-      // Add some realistic variation
-      const currentSearchRate = Math.max(0, baseSearchRate + Math.round((Math.random() - 0.5) * baseSearchRate * 0.3));
-      const currentIndexingRate = Math.max(0, baseIndexingRate + Math.round((Math.random() - 0.5) * baseIndexingRate * 0.3));
-      const currentEPS = currentSearchRate + currentIndexingRate;
-      
-      const calculatedMetrics: SearchMetrics = {
-        totalQueries: totalQueryCount,
-        avgQueryTime: totalQueryCount > 0 ? Math.round(totalQueryTime / totalQueryCount) : 0,
-        slowQueries: slowQueries,
-        failedQueries: failedQueries,
-        indexingRate: currentIndexingRate,
-        searchRate: currentSearchRate,
-        currentEPS: currentEPS,
-        peakEPS: Math.round(currentEPS * 1.8), // More realistic peak estimation
-        lastUpdate: new Date().toLocaleTimeString()
-      };
+      const p = prev.current;
+      const dt = p ? (t.at - p.at) / 1000 : 0;
+      // Counters reset when a node restarts: treat negative deltas as "no data"
+      const rate = (now: number, before: number | undefined) =>
+        p && dt > 0 && before !== undefined && now >= before ? (now - before) / dt : null;
 
-      setMetrics(calculatedMetrics);
-
-      // Process indexing stats per index
-      const indexStats: IndexingStats[] = [];
-      if (indicesStats.indices) {
-        Object.entries(indicesStats.indices).forEach(([indexName, stats]: [string, any]) => {
-          const indexing = stats.total?.indexing || {};
-          const docs = stats.total?.docs || {};
-          const store = stats.total?.store || {};
-          
-          // Use more realistic indexing rates
-          const realisticDocsPerSecond = Math.min(50, Math.round((indexing.index_total || 0) / Math.max(clusterUptime, 3600)));
-          
-          indexStats.push({
-            indexName,
-            docsPerSecond: realisticDocsPerSecond,
-            totalDocs: docs.count || 0,
-            indexingCurrent: indexing.index_current || 0,
-            deleteCurrent: indexing.delete_current || 0,
-            totalSize: formatBytes(store.size_in_bytes || 0)
-          });
+      const indexRows: IndexRow[] = [];
+      for (const [name, st] of Object.entries((indicesStats?.indices ?? {}) as Record<string, any>)) {
+        const ix = st.total?.indexing ?? {};
+        const sx = st.total?.search ?? {};
+        t.perIndex[name] = { indexTotal: ix.index_total ?? 0, queryTotal: sx.query_total ?? 0 };
+        indexRows.push({
+          name,
+          docs: st.total?.docs?.count ?? 0,
+          sizeBytes: st.total?.store?.size_in_bytes ?? 0,
+          indexingCurrent: ix.index_current ?? 0,
+          queryTotal: sx.query_total ?? 0,
+          indexRate: rate(ix.index_total ?? 0, p?.perIndex[name]?.indexTotal),
+          searchRate: rate(sx.query_total ?? 0, p?.perIndex[name]?.queryTotal),
         });
       }
+      indexRows.sort((a, b) =>
+        (b.indexRate ?? 0) - (a.indexRate ?? 0) || (b.searchRate ?? 0) - (a.searchRate ?? 0) || b.docs - a.docs);
 
-      setIndexingStats(indexStats.sort((a, b) => b.docsPerSecond - a.docsPerSecond));
-
-      // Generate query analytics (simulated based on available data)
-      const analytics: QueryAnalytics[] = [
-        {
-          queryType: "term",
-          count: Math.round(totalQueryCount * 0.4),
-          avgLatency: Math.round(totalQueryTime * 0.3 / Math.max(totalQueryCount * 0.4, 1)),
-          p95Latency: Math.round(totalQueryTime * 0.5 / Math.max(totalQueryCount * 0.4, 1)),
-          errors: Math.round(failedQueries * 0.3)
-        },
-        {
-          queryType: "match",
-          count: Math.round(totalQueryCount * 0.35),
-          avgLatency: Math.round(totalQueryTime * 0.4 / Math.max(totalQueryCount * 0.35, 1)),
-          p95Latency: Math.round(totalQueryTime * 0.6 / Math.max(totalQueryCount * 0.35, 1)),
-          errors: Math.round(failedQueries * 0.4)
-        },
-        {
-          queryType: "range",
-          count: Math.round(totalQueryCount * 0.15),
-          avgLatency: Math.round(totalQueryTime * 0.2 / Math.max(totalQueryCount * 0.15, 1)),
-          p95Latency: Math.round(totalQueryTime * 0.3 / Math.max(totalQueryCount * 0.15, 1)),
-          errors: Math.round(failedQueries * 0.2)
-        },
-        {
-          queryType: "aggregation",
-          count: Math.round(totalQueryCount * 0.1),
-          avgLatency: Math.round(totalQueryTime * 0.1 / Math.max(totalQueryCount * 0.1, 1)),
-          p95Latency: Math.round(totalQueryTime * 0.2 / Math.max(totalQueryCount * 0.1, 1)),
-          errors: Math.round(failedQueries * 0.1)
-        }
-      ];
-
-      setQueryAnalytics(analytics);
-      
+      const dq = p ? t.queryTotal - p.queryTotal : 0;
+      setDerived({
+        searchRate: rate(t.queryTotal, p?.queryTotal),
+        indexRate: rate(t.indexTotal, p?.indexTotal),
+        intervalLatency: p && dq > 0 ? (t.queryTimeMs - p.queryTimeMs) / dq : null,
+        avgLatency: t.queryTotal ? t.queryTimeMs / t.queryTotal : 0,
+        avgFetch: t.fetchTotal ? t.fetchTimeMs / t.fetchTotal : 0,
+        queryCurrent: t.queryCurrent,
+        queryTotal: t.queryTotal,
+        indexTotal: t.indexTotal,
+        updatedAt: new Date(t.at).toLocaleTimeString(),
+      });
+      setRows(indexRows);
+      prev.current = t;
     } catch (err: any) {
-      setError(`Failed to load search metrics: ${err.message}`);
-      console.error('Error loading search metrics:', err);
+      setError(`Failed to load search statistics: ${err?.message ?? err}`);
     } finally {
+      inFlight.current = false;
       setLoading(false);
     }
   }, [isConnected]);
 
-  // Initial load
+  // Initial sample, then a second one shortly after so rates appear without waiting a full interval
   useEffect(() => {
-    if (isConnected) {
-      loadSearchMetrics();
-    }
-  }, [isConnected, loadSearchMetrics]);
+    if (!isConnected) return;
+    prev.current = null;
+    load();
+    const t = setTimeout(load, 3000);
+    return () => clearTimeout(t);
+  }, [isConnected, load]);
 
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
+  useEffect(() => {
+    if (!autoRefresh || !isConnected) return;
+    const id = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      load();
+    }, refreshInterval);
+    return () => clearInterval(id);
+  }, [autoRefresh, refreshInterval, isConnected, load]);
 
-  const formatNumber = (num: number): string => {
-    if (num === 0) return '0';
-    if (num < 1000) return num.toString();
-    if (num < 1000000) return (num / 1000).toFixed(1) + 'K';
-    if (num < 1000000000) return (num / 1000000).toFixed(1) + 'M';
-    return (num / 1000000000).toFixed(1) + 'B';
-  };
+  const shown = filter ? rows.filter(r => r.name.toLowerCase().includes(filter.toLowerCase())) : rows;
 
-  const getEPSStatus = (eps: number): { color: string; icon: any; label: string } => {
-    if (eps > 1000) return { color: "bg-red-500", icon: TrendingUp, label: "High Load" };
-    if (eps > 500) return { color: "bg-yellow-500", icon: Activity, label: "Moderate Load" };
-    if (eps > 100) return { color: "bg-green-500", icon: CheckCircle, label: "Normal Load" };
-    return { color: "bg-blue-500", icon: Activity, label: "Low Load" };
-  };
-
-  const getMetricDescription = (metric: string): string => {
-    switch (metric) {
-      case 'currentEPS':
-        return 'Current events (searches + indexing) processed per second';
-      case 'peakEPS':
-        return 'Estimated maximum events your cluster can handle per second';
-      case 'searchRate':
-        return 'Number of search queries processed per second';
-      case 'indexingRate':
-        return 'Number of documents indexed per second';
-      default:
-        return '';
-    }
-  };
-
-  const epsStatus = metrics ? getEPSStatus(metrics.currentEPS) : { color: "bg-gray-500", icon: Activity, label: "Unknown" };
+  if (!isConnected) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Search analytics" description="Search and indexing throughput, latency and per-index activity." />
+        <EmptyState
+          icon={Database}
+          title="No cluster connected"
+          description="Connect to an Elasticsearch or OpenSearch cluster to see search analytics."
+          action={<Button asChild><Link href="/connections">Go to connections</Link></Button>}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="container mx-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold flex items-center">
-            <BarChart3 className="h-6 w-6 sm:h-8 sm:w-8 mr-2 sm:mr-3" />
-            <span className="hidden sm:inline">Search Analytics & EPS</span>
-            <span className="sm:hidden">Search Analytics</span>
-          </h1>
-          <p className="text-muted-foreground mt-1 sm:mt-2 text-sm sm:text-base">
-            Monitor search performance, indexing rates, and Events Per Second
-          </p>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-2 sm:space-x-2">
-          <div className="flex items-center space-x-2">
-            <Label className="text-xs sm:text-sm">Time Range:</Label>
-            <Select value={timeRange} onValueChange={setTimeRange}>
-              <SelectTrigger className="w-16 sm:w-20">
-                <SelectValue />
-              </SelectTrigger>
+    <div className="space-y-6">
+      <PageHeader
+        title="Search analytics"
+        description="Search and indexing throughput, latency and per-index activity. Rates are measured between consecutive samples."
+        meta={derived && <span className="text-xs text-muted-foreground">Updated {derived.updatedAt}</span>}
+        actions={
+          <>
+            <div className="flex items-center gap-2">
+              <Switch id="sa-auto" checked={autoRefresh} onCheckedChange={setAutoRefresh} />
+              <Label htmlFor="sa-auto" className="text-sm font-normal">Auto-refresh</Label>
+            </div>
+            <Select value={String(refreshInterval)} onValueChange={v => setRefreshInterval(Number(v))}>
+              <SelectTrigger className="w-24" aria-label="Refresh interval"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="1m">1m</SelectItem>
-                <SelectItem value="5m">5m</SelectItem>
-                <SelectItem value="15m">15m</SelectItem>
-                <SelectItem value="1h">1h</SelectItem>
-                <SelectItem value="24h">24h</SelectItem>
+                <SelectItem value="5000">5 s</SelectItem>
+                <SelectItem value="10000">10 s</SelectItem>
+                <SelectItem value="30000">30 s</SelectItem>
+                <SelectItem value="60000">60 s</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          <div className="flex items-center space-x-2">
-            <Label className="text-xs sm:text-sm">Auto-refresh:</Label>
-            <Button
-              variant={autoRefresh ? "default" : "outline"}
-              size="sm"
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              className="text-xs"
-            >
-              {autoRefresh ? "ON" : "OFF"}
+            <Button variant="outline" onClick={load} disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              Refresh
             </Button>
-          </div>
-          <Select value={refreshInterval.toString()} onValueChange={(value) => setRefreshInterval(parseInt(value))}>
-            <SelectTrigger className="w-20 sm:w-24">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1000">1s</SelectItem>
-              <SelectItem value="5000">5s</SelectItem>
-              <SelectItem value="10000">10s</SelectItem>
-              <SelectItem value="30000">30s</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button 
-            onClick={loadSearchMetrics} 
-            variant="outline"
-            disabled={!isConnected || loading}
-            className="w-full sm:w-auto"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Refresh
-          </Button>
-        </div>
-      </div>
-
-      {/* Connection Status & Error Messages */}
-      {!isConnected && (
-        <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-400">
-          <Database className="h-4 w-4" />
-          <AlertDescription>
-            Not connected to cluster. Please connect first to view search analytics.
-          </AlertDescription>
-        </Alert>
-      )}
+          </>
+        }
+      />
 
       {error && (
-        <Alert className="border-destructive/50 text-destructive">
+        <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* EPS Explanation */}
-      <Alert className="border-blue-500/50 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
-        <Activity className="h-4 w-4" />
-        <AlertDescription>
-          <strong>EPS (Events Per Second)</strong> measures cluster activity. 
-          <strong>Current EPS</strong> = active searches + indexing operations per second. 
-          <strong>Peak EPS</strong> = estimated maximum capacity. 
-          Values above 1,000 indicate high load, while 100-500 is normal for active clusters.
-          <br />
-          <strong>Time Range:</strong> The selected time range ({timeRange}) affects query totals and failure counts displayed below.
-        </AlertDescription>
-      </Alert>
+      <StatGrid>
+        <StatCard label="Search rate" icon={Search} value={formatRate(derived?.searchRate ?? null, "q/s")}
+          hint={derived?.searchRate === null ? "Measuring — needs two samples" : "Queries per second, last interval"} />
+        <StatCard label="Indexing rate" icon={FileInput} value={formatRate(derived?.indexRate ?? null, "docs/s")}
+          hint={derived?.indexRate === null ? "Measuring — needs two samples" : "Documents per second, last interval"} />
+        <StatCard label="Query latency" icon={Timer}
+          value={derived ? `${(derived.intervalLatency ?? derived.avgLatency).toFixed(1)} ms` : "—"}
+          hint={derived?.intervalLatency != null ? `Last interval · ${derived.avgLatency.toFixed(1)} ms since node start` : "Average since node start"}
+          tone={(derived?.intervalLatency ?? derived?.avgLatency ?? 0) > 500 ? "warning" : "default"} />
+        <StatCard label="In-flight searches" icon={Activity} value={derived ? derived.queryCurrent.toLocaleString() : "—"}
+          hint="Query phases executing right now" />
+      </StatGrid>
 
-      {/* EPS Overview Cards */}
-      <div className="grid gap-4 sm:gap-6 grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm sm:text-base flex items-center">
-              <Zap className="h-4 w-4 mr-2" />
-              Current EPS
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center space-x-2">
-              <div className={`w-2 h-2 rounded-full ${epsStatus.color}`}></div>
-              <span className="text-xl sm:text-2xl font-bold">
-                {formatNumber(metrics?.currentEPS || 0)}
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {epsStatus.label} (current activity)
-            </p>
-            <p className="text-xs text-muted-foreground mt-1 opacity-75">
-              Real-time events processed per second
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm sm:text-base flex items-center">
-              <Target className="h-4 w-4 mr-2" />
-              Peak EPS
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl sm:text-2xl font-bold text-orange-600">
-              {formatNumber(metrics?.peakEPS || 0)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Estimated peak load
-            </p>
-            <p className="text-xs text-muted-foreground mt-1 opacity-75">
-              {getMetricDescription('peakEPS')}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm sm:text-base flex items-center">
-              <Search className="h-4 w-4 mr-2" />
-              Search Rate
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl sm:text-2xl font-bold text-blue-600">
-              {formatNumber(metrics?.searchRate || 0)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Queries per second
-            </p>
-            <p className="text-xs text-muted-foreground mt-1 opacity-75">
-              {getMetricDescription('searchRate')}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm sm:text-base flex items-center">
-              <Activity className="h-4 w-4 mr-2" />
-              Indexing Rate
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl sm:text-2xl font-bold text-green-600">
-              {formatNumber(metrics?.indexingRate || 0)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Documents per second
-            </p>
-            <p className="text-xs text-muted-foreground mt-1 opacity-75">
-              {getMetricDescription('indexingRate')}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Search Performance Metrics */}
-      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
-        <Card>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-1">
           <CardHeader>
-            <CardTitle className="text-lg sm:text-xl flex items-center">
-              <Gauge className="h-5 w-5 mr-2" />
-              Search Performance
-            </CardTitle>
-            <CardDescription>
-              Query execution metrics and performance indicators (last {timeRange})
-            </CardDescription>
+            <CardTitle className="text-base">Since node start</CardTitle>
+            <CardDescription>Cumulative counters across all nodes.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-xs text-muted-foreground">Total Queries ({timeRange})</Label>
-                <p className="text-lg font-semibold">{formatNumber(metrics?.totalQueries || 0)}</p>
+          <CardContent className="grid grid-cols-2 gap-4 text-sm">
+            {[
+              { label: "Queries", value: derived ? derived.queryTotal.toLocaleString() : "—" },
+              { label: "Documents indexed", value: derived ? derived.indexTotal.toLocaleString() : "—" },
+              { label: "Avg. query phase", value: derived ? `${derived.avgLatency.toFixed(1)} ms` : "—" },
+              { label: "Avg. fetch phase", value: derived ? `${derived.avgFetch.toFixed(1)} ms` : "—" },
+            ].map(m => (
+              <div key={m.label}>
+                <p className="text-xs text-muted-foreground">{m.label}</p>
+                <p className="mt-0.5 font-medium tabular-nums">{m.value}</p>
               </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Avg Query Time</Label>
-                <p className="text-lg font-semibold">{metrics?.avgQueryTime || 0}ms</p>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Slow Queries ({timeRange})</Label>
-                <p className="text-lg font-semibold text-yellow-600">{formatNumber(metrics?.slowQueries || 0)}</p>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Failed Queries ({timeRange})</Label>
-                <p className="text-lg font-semibold text-red-600">{formatNumber(metrics?.failedQueries || 0)}</p>
-              </div>
+            ))}
+            <p className="col-span-2 flex items-center gap-1.5 border-t pt-3 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" /> Counters reset when a node restarts.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="min-w-0 lg:col-span-2">
+          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="text-base">Per-index activity</CardTitle>
+              <CardDescription>Busiest indices first, by indexing then search rate.</CardDescription>
             </div>
-            {metrics?.lastUpdate && (
-              <div className="text-xs text-muted-foreground pt-2 border-t">
-                Last updated: {metrics.lastUpdate}
+            <div className="relative w-full sm:w-56">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input className="pl-8" placeholder="Filter indices" value={filter} onChange={e => setFilter(e.target.value)} />
+            </div>
+          </CardHeader>
+          <CardContent>
+            {shown.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">{loading ? "Loading…" : "No indices match."}</p>
+            ) : (
+              <div className="max-h-[480px] overflow-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Index</TableHead>
+                      <TableHead className="text-right">Indexing</TableHead>
+                      <TableHead className="text-right">Search</TableHead>
+                      <TableHead className="text-right">Documents</TableHead>
+                      <TableHead className="text-right">Size</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {shown.slice(0, 200).map(r => (
+                      <TableRow key={r.name}>
+                        <TableCell className="max-w-[260px] truncate font-mono text-xs" title={r.name}>
+                          {r.name}
+                          {r.indexingCurrent > 0 && (
+                            <Badge variant="outline" className="ml-2 font-normal">{r.indexingCurrent} writing</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">{formatRate(r.indexRate, "/s")}</TableCell>
+                        <TableCell className="text-right">{formatRate(r.searchRate, "/s")}</TableCell>
+                        <TableCell className="text-right">{r.docs.toLocaleString()}</TableCell>
+                        <TableCell className="text-right">{formatBytes(r.sizeBytes)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
             )}
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg sm:text-xl flex items-center">
-              <BarChart className="h-5 w-5 mr-2" />
-              Query Types Analysis
-            </CardTitle>
-            <CardDescription>
-              Breakdown of query types and their performance
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {queryAnalytics.map((query) => (
-                <div key={query.queryType} className="flex items-center justify-between p-2 rounded-lg border">
-                  <div>
-                    <h4 className="font-medium text-sm capitalize">{query.queryType}</h4>
-                    <p className="text-xs text-muted-foreground">
-                      {formatNumber(query.count)} queries ({timeRange})
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium">{query.avgLatency}ms avg</p>
-                    <p className="text-xs text-muted-foreground">P95: {query.p95Latency}ms</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
       </div>
-
-      {/* Indexing Statistics */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg sm:text-xl flex items-center">
-            <LineChart className="h-5 w-5 mr-2" />
-            Indexing Statistics by Index
-          </CardTitle>
-          <CardDescription>
-            Real-time indexing performance and document ingestion rates
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {indexingStats.length === 0 ? (
-            <div className="text-center py-8">
-              <Activity className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                {isConnected ? "No indexing activity detected" : "Connect to cluster to view indexing stats"}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {indexingStats.map((stat) => (
-                <div key={stat.indexName} className="flex items-center justify-between p-3 rounded-lg border">
-                  <div className="min-w-0 flex-1">
-                    <h4 className="font-medium text-sm truncate">{stat.indexName}</h4>
-                    <p className="text-xs text-muted-foreground">
-                      {stat.totalDocs.toLocaleString()} docs • {stat.totalSize}
-                    </p>
-                  </div>
-                  <div className="flex items-center space-x-4 text-right">
-                    <div>
-                      <p className="text-sm font-medium">{stat.docsPerSecond}/s</p>
-                      <p className="text-xs text-muted-foreground">indexing</p>
-                    </div>
-                    <div className="flex space-x-1">
-                      {stat.indexingCurrent > 0 && (
-                        <Badge variant="outline" className="text-xs">
-                          +{stat.indexingCurrent}
-                        </Badge>
-                      )}
-                      {stat.deleteCurrent > 0 && (
-                        <Badge variant="destructive" className="text-xs">
-                          -{stat.deleteCurrent}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

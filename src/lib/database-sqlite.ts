@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
-import { join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { createHash, randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 import { existsSync, mkdirSync } from 'fs';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 
 // ── Encryption helpers for sensitive stored values (e.g. ES passwords) ────────
 // Key is derived from JWT_SECRET so it rotates if the secret changes.
@@ -56,6 +56,40 @@ export interface Connection {
 }
 
 // ── New feature interfaces ──────────────────────────────────────────────────
+export interface ConfigSnapshot {
+  id: string;
+  connection_key: string;     // saved connection id, or "adhoc:<url>"
+  connection_label: string;
+  engine: string;
+  version: string | null;
+  taken_at: string;
+  taken_by: string;           // username or "scheduler"
+  last_checked_at: string;    // last time the configuration was confirmed unchanged
+  hash: string;
+  changes: number;            // number of changes vs the previous snapshot
+  data: string;               // JSON DriftSnapshotData
+}
+
+export interface MigrationJob {
+  id: string;
+  created_by: string;
+  source_index: string;
+  target_table: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+  total_docs: number;
+  read_docs: number;
+  inserted_rows: number;
+  batch_size: number;
+  max_docs: number | null;
+  started_at: string;
+  updated_at: string;
+  finished_at: string | null;
+  error: string | null;
+  result: string | null; // JSON: verification + storage comparison
+}
+
+export type ConnectionEngine = 'elasticsearch' | 'opensearch' | 'clickhouse';
+
 export interface SavedConnection {
   id: string;
   name: string;
@@ -71,6 +105,7 @@ export interface SavedConnection {
   updated_at: string;
   is_active: boolean;
   last_connected?: string;
+  engine: ConnectionEngine;
 }
 
 export interface AuditLogEntry {
@@ -143,6 +178,23 @@ export interface AppSetting {
 }
 
 /** Async bcrypt hash — use for all new password storage. */
+// Column allowlists for dynamic UPDATEs — keys from request bodies must never
+// reach SQL as identifiers (SQL injection via object keys).
+const UPDATABLE_COLUMNS: Record<string, ReadonlySet<string>> = {
+  users: new Set(['username', 'email', 'password_hash', 'role', 'last_login', 'is_active', 'must_change_password']),
+  connections: new Set(['name', 'url', 'username', 'password', 'is_active']),
+  alert_rules: new Set(['name', 'metric', 'operator', 'threshold', 'window_minutes', 'severity', 'channels',
+    'connection_id', 'is_active', 'last_triggered', 'trigger_count']),
+  scheduled_reports: new Set(['name', 'report_type', 'format', 'cron_expression', 'email_to', 'email_subject',
+    'connection_id', 'is_active', 'last_run', 'next_run', 'last_status']),
+  saved_connections: new Set(['name', 'url', 'username', 'password_enc', 'color', 'description', 'allowed_roles',
+    'ssl_verify', 'is_active', 'last_connected', 'engine']),
+};
+
+function isUpdatableColumn(table: string, column: string): boolean {
+  return UPDATABLE_COLUMNS[table]?.has(column) ?? false;
+}
+
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, BCRYPT_ROUNDS);
 }
@@ -175,10 +227,14 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 class SQLiteDatabase {
   private db: Database.Database;
   private readonly dbPath: string;
+  private authStateStmt?: Database.Statement;
 
   constructor() {
-    const dataDir = join(process.cwd(), 'data');
-    this.dbPath = join(dataDir, 'indexsphere.db');
+    // INDEXSPHERE_DB_PATH overrides the default ./data/indexsphere.db
+    this.dbPath = process.env.INDEXSPHERE_DB_PATH
+      ? resolve(process.env.INDEXSPHERE_DB_PATH)
+      : join(process.cwd(), 'data', 'indexsphere.db');
+    const dataDir = dirname(this.dbPath);
     
     // Ensure data directory exists
     if (!existsSync(dataDir)) {
@@ -186,7 +242,27 @@ class SQLiteDatabase {
     }
 
     this.db = new Database(this.dbPath);
+    // WAL: readers never block the writer; busy_timeout: wait instead of failing
+    // if another process (e.g. a backup) briefly holds the write lock.
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('busy_timeout = 5000');
+    this.db.pragma('synchronous = NORMAL');
+    this.db.pragma('foreign_keys = ON');
     this.initializeDatabase();
+  }
+
+  /**
+   * Delete old audit-log rows, alert triggers and stale intel-cache entries.
+   * Runs daily from the scheduler; returns the number of rows removed per table.
+   */
+  pruneOldData(auditDays: number, triggerDays: number): { audit: number; triggers: number; intel: number } {
+    const cutoff = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+    const audit = this.db.prepare('DELETE FROM audit_log WHERE created_at < ?').run(cutoff(auditDays)).changes;
+    const triggers = this.db.prepare('DELETE FROM alert_triggers WHERE created_at < ?').run(cutoff(triggerDays)).changes;
+    // Per-CVE EPSS rows and per-version OSV rows accumulate; feeds are refetched anyway
+    const intel = this.db.prepare('DELETE FROM intel_cache WHERE fetched_at < ?').run(cutoff(7)).changes;
+    if (audit + triggers + intel > 1000) this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    return { audit, triggers, intel };
   }
 
   private initializeDatabase(): void {
@@ -248,7 +324,8 @@ class SQLiteDatabase {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         is_active INTEGER DEFAULT 1,
-        last_connected TEXT
+        last_connected TEXT,
+        engine TEXT DEFAULT 'elasticsearch'
       );
 
       CREATE TABLE IF NOT EXISTS audit_log (
@@ -327,6 +404,63 @@ class SQLiteDatabase {
         updated_at TEXT NOT NULL
       );
     `);
+
+    // Cache for external threat-intel feeds (NVD, OSV, CISA KEV, EPSS)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS intel_cache (
+        key TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      )
+    `);
+
+    // Elasticsearch → ClickHouse data migration jobs
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS migration_jobs (
+        id TEXT PRIMARY KEY,
+        created_by TEXT NOT NULL,
+        source_index TEXT NOT NULL,
+        target_table TEXT NOT NULL,
+        status TEXT NOT NULL,
+        total_docs INTEGER DEFAULT 0,
+        read_docs INTEGER DEFAULT 0,
+        inserted_rows INTEGER DEFAULT 0,
+        batch_size INTEGER NOT NULL,
+        max_docs INTEGER,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        error TEXT,
+        result TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_migration_jobs_started ON migration_jobs(started_at DESC);
+    `);
+    // Configuration drift snapshots (only stored when the configuration changed)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS config_snapshots (
+        id TEXT PRIMARY KEY,
+        connection_key TEXT NOT NULL,
+        connection_label TEXT NOT NULL,
+        engine TEXT NOT NULL,
+        version TEXT,
+        taken_at TEXT NOT NULL,
+        taken_by TEXT NOT NULL,
+        last_checked_at TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        changes INTEGER NOT NULL DEFAULT 0,
+        data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_snapshots_key ON config_snapshots(connection_key, taken_at DESC);
+    `);
+
+    // A restart kills in-flight jobs: never leave them looking "running"
+    this.db.prepare(`UPDATE migration_jobs SET status = 'interrupted', finished_at = ?, error = 'Server restarted while the job was running'
+                     WHERE status IN ('running', 'queued')`).run(new Date().toISOString());
+
+    // Migrate: saved connections gained an engine (elasticsearch | opensearch | clickhouse)
+    try {
+      this.db.exec(`ALTER TABLE saved_connections ADD COLUMN engine TEXT DEFAULT 'elasticsearch'`);
+    } catch { /* column already exists — safe to ignore */ }
 
     // Check if admin user exists, if not create one
     const adminExists = this.db.prepare('SELECT COUNT(*) as count FROM users WHERE role = ?').get('admin') as { count: number };
@@ -422,6 +556,20 @@ class SQLiteDatabase {
     })) as User[];
   }
 
+  /** Synchronous lookup used on every authenticated request to re-validate the JWT subject. */
+  getUserAuthState(id: string): { username: string; role: User['role']; is_active: boolean; must_change_password: boolean } | null {
+    // Runs on every authenticated request: reuse one compiled statement
+    this.authStateStmt ??= this.db.prepare('SELECT username, role, is_active, must_change_password FROM users WHERE id = ?');
+    const row = this.authStateStmt.get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      username: row.username as string,
+      role: row.role as User['role'],
+      is_active: Boolean(row.is_active),
+      must_change_password: Boolean(row.must_change_password),
+    };
+  }
+
   async getUserById(id: string): Promise<User | null> {
     const stmt = this.db.prepare('SELECT * FROM users WHERE id = ?');
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -492,7 +640,7 @@ class SQLiteDatabase {
     const updateValues: any[] = [];
 
     Object.entries(updates).forEach(([key, value]) => {
-      if (key !== 'id' && key !== 'created_at' && value !== undefined) {
+      if (isUpdatableColumn('users', key) && value !== undefined) {
         updateFields.push(`${key} = ?`);
         if (key === 'is_active' || key === 'must_change_password') {
           updateValues.push(value ? 1 : 0);
@@ -603,7 +751,7 @@ class SQLiteDatabase {
     const updateValues: any[] = [];
 
     Object.entries(updates).forEach(([key, value]) => {
-      if (key !== 'id' && key !== 'created_at' && value !== undefined) {
+      if (isUpdatableColumn('connections', key) && value !== undefined) {
         updateFields.push(`${key} = ?`);
         if (key === 'is_active') {
           updateValues.push(value ? 1 : 0);
@@ -720,7 +868,7 @@ class SQLiteDatabase {
     const fields: string[] = [];
     const vals: unknown[] = [];
     for (const [k, v] of Object.entries(updates)) {
-      if (k === 'id' || k === 'created_at') continue;
+      if (!isUpdatableColumn('alert_rules', k) || v === undefined) continue;
       fields.push(`${k} = ?`);
       vals.push(k === 'is_active' ? (v ? 1 : 0) : v);
     }
@@ -784,7 +932,7 @@ class SQLiteDatabase {
     const fields: string[] = [];
     const vals: unknown[] = [];
     for (const [k, v] of Object.entries(updates)) {
-      if (k === 'id' || k === 'created_at' || k === 'created_by') continue;
+      if (!isUpdatableColumn('scheduled_reports', k) || v === undefined) continue;
       fields.push(`${k} = ?`);
       vals.push(k === 'is_active' ? (v ? 1 : 0) : v);
     }
@@ -800,29 +948,29 @@ class SQLiteDatabase {
 
   // ── Saved Connections (multi-cluster with role-based access) ─────────────
   getSavedConnections(allowedRole?: string): SavedConnection[] {
-    const rows = allowedRole
-      ? (this.db.prepare(`SELECT * FROM saved_connections WHERE is_active = 1 AND (allowed_roles LIKE ? OR allowed_roles LIKE '%"admin"%') ORDER BY name`).all(`%"${allowedRole}"%`) as Record<string, unknown>[])
-      : (this.db.prepare('SELECT * FROM saved_connections ORDER BY name').all() as Record<string, unknown>[]);
-    return rows.map(r => ({ ...r, ssl_verify: Boolean(r.ssl_verify), is_active: Boolean(r.is_active) })) as SavedConnection[];
+    const rows = this.db.prepare('SELECT * FROM saved_connections ORDER BY name').all() as Record<string, unknown>[];
+    const conns = rows.map(r => ({ ...r, ssl_verify: Boolean(r.ssl_verify), is_active: Boolean(r.is_active), engine: (r.engine ?? 'elasticsearch') })) as SavedConnection[];
+    if (!allowedRole) return conns;
+    return conns.filter(c => c.is_active && isRoleAllowedForConnection(c, allowedRole));
   }
 
   getSavedConnectionById(id: string): SavedConnection | null {
     const row = this.db.prepare('SELECT * FROM saved_connections WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
-    return { ...row, ssl_verify: Boolean(row.ssl_verify), is_active: Boolean(row.is_active) } as SavedConnection;
+    return { ...row, ssl_verify: Boolean(row.ssl_verify), is_active: Boolean(row.is_active), engine: (row.engine ?? 'elasticsearch') } as SavedConnection;
   }
 
-  createSavedConnection(data: Omit<SavedConnection, 'id' | 'created_at' | 'updated_at' | 'last_connected'>): SavedConnection {
+  createSavedConnection(data: Omit<SavedConnection, 'id' | 'created_at' | 'updated_at' | 'last_connected' | 'engine'> & { engine?: ConnectionEngine }): SavedConnection {
     const id = 'sc-' + Date.now() + '-' + randomBytes(4).toString('hex');
     const now = new Date().toISOString();
     const enc = data.password_enc ? encryptValue(data.password_enc) : null;
     this.db.prepare(`
       INSERT INTO saved_connections(id,name,url,username,password_enc,color,description,
-        allowed_roles,ssl_verify,created_by,created_at,updated_at,is_active)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        allowed_roles,ssl_verify,created_by,created_at,updated_at,is_active,engine)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(id, data.name, data.url, data.username ?? null, enc, data.color,
       data.description ?? null, data.allowed_roles, data.ssl_verify ? 1 : 0,
-      data.created_by, now, now, data.is_active ? 1 : 0);
+      data.created_by, now, now, data.is_active ? 1 : 0, data.engine ?? 'elasticsearch');
     return this.getSavedConnectionById(id)!;
   }
 
@@ -833,7 +981,7 @@ class SQLiteDatabase {
     const fields: string[] = [];
     const vals: unknown[] = [];
     for (const [k, v] of Object.entries(updates)) {
-      if (k === 'id' || k === 'created_at' || k === 'created_by') continue;
+      if (!isUpdatableColumn('saved_connections', k) || v === undefined) continue;
       fields.push(`${k} = ?`);
       if (k === 'password_enc' && v) vals.push(encryptValue(v as string));
       else if (k === 'ssl_verify' || k === 'is_active') vals.push(v ? 1 : 0);
@@ -845,19 +993,109 @@ class SQLiteDatabase {
     return this.getSavedConnectionById(id);
   }
 
+  // ── Migration jobs ─────────────────────────────────────────────────────────
+  createMigrationJob(job: Pick<MigrationJob, 'id' | 'created_by' | 'source_index' | 'target_table' | 'batch_size' | 'max_docs'>): MigrationJob {
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO migration_jobs(id, created_by, source_index, target_table, status, batch_size, max_docs, started_at, updated_at)
+                     VALUES(?, ?, ?, ?, 'queued', ?, ?, ?, ?)`)
+      .run(job.id, job.created_by, job.source_index, job.target_table, job.batch_size, job.max_docs ?? null, now, now);
+    return this.getMigrationJob(job.id)!;
+  }
+
+  updateMigrationJob(id: string, u: Partial<Pick<MigrationJob, 'status' | 'total_docs' | 'read_docs' | 'inserted_rows' | 'finished_at' | 'error' | 'result'>>): void {
+    const cols = Object.keys(u).filter(k => ['status', 'total_docs', 'read_docs', 'inserted_rows', 'finished_at', 'error', 'result'].includes(k));
+    if (!cols.length) return;
+    this.db.prepare(`UPDATE migration_jobs SET ${cols.map(c => `${c} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+      .run(...cols.map(c => (u as Record<string, unknown>)[c] ?? null), new Date().toISOString(), id);
+  }
+
+  getMigrationJob(id: string): MigrationJob | null {
+    return (this.db.prepare('SELECT * FROM migration_jobs WHERE id = ?').get(id) as MigrationJob | undefined) ?? null;
+  }
+
+  listMigrationJobs(createdBy?: string, limit = 50): MigrationJob[] {
+    return (createdBy
+      ? this.db.prepare('SELECT * FROM migration_jobs WHERE created_by = ? ORDER BY started_at DESC LIMIT ?').all(createdBy, limit)
+      : this.db.prepare('SELECT * FROM migration_jobs ORDER BY started_at DESC LIMIT ?').all(limit)) as MigrationJob[];
+  }
+
+  // ── Configuration drift snapshots ─────────────────────────────────────────
+  latestSnapshot(connectionKey: string): ConfigSnapshot | null {
+    return (this.db.prepare('SELECT * FROM config_snapshots WHERE connection_key = ? ORDER BY taken_at DESC LIMIT 1').get(connectionKey) as ConfigSnapshot | undefined) ?? null;
+  }
+
+  insertSnapshot(snap: Omit<ConfigSnapshot, 'last_checked_at'>, keep = 90): void {
+    this.db.prepare(`INSERT INTO config_snapshots(id, connection_key, connection_label, engine, version, taken_at, taken_by, last_checked_at, hash, changes, data)
+                     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(snap.id, snap.connection_key, snap.connection_label, snap.engine, snap.version, snap.taken_at, snap.taken_by, snap.taken_at, snap.hash, snap.changes, snap.data);
+    // Retention: keep the most recent `keep` snapshots per connection
+    this.db.prepare(`DELETE FROM config_snapshots WHERE connection_key = ? AND id NOT IN (
+                       SELECT id FROM config_snapshots WHERE connection_key = ? ORDER BY taken_at DESC LIMIT ?)`)
+      .run(snap.connection_key, snap.connection_key, keep);
+  }
+
+  touchSnapshot(id: string, at: string): void {
+    this.db.prepare('UPDATE config_snapshots SET last_checked_at = ? WHERE id = ?').run(at, id);
+  }
+
+  listSnapshots(connectionKey: string, limit = 90): Omit<ConfigSnapshot, 'data'>[] {
+    return this.db.prepare(`SELECT id, connection_key, connection_label, engine, version, taken_at, taken_by, last_checked_at, hash, changes
+                            FROM config_snapshots WHERE connection_key = ? ORDER BY taken_at DESC LIMIT ?`).all(connectionKey, limit) as Omit<ConfigSnapshot, 'data'>[];
+  }
+
+  getSnapshot(id: string): ConfigSnapshot | null {
+    return (this.db.prepare('SELECT * FROM config_snapshots WHERE id = ?').get(id) as ConfigSnapshot | undefined) ?? null;
+  }
+
+  previousSnapshot(connectionKey: string, before: string): ConfigSnapshot | null {
+    return (this.db.prepare('SELECT * FROM config_snapshots WHERE connection_key = ? AND taken_at < ? ORDER BY taken_at DESC LIMIT 1')
+      .get(connectionKey, before) as ConfigSnapshot | undefined) ?? null;
+  }
+
+  // ── External intel cache ──────────────────────────────────────────────────
+  getIntelCache<T>(key: string): { data: T; fetchedAt: string } | null {
+    const row = this.db.prepare('SELECT data, fetched_at FROM intel_cache WHERE key = ?').get(key) as { data: string; fetched_at: string } | undefined;
+    if (!row) return null;
+    try {
+      return { data: JSON.parse(row.data) as T, fetchedAt: row.fetched_at };
+    } catch {
+      return null;
+    }
+  }
+
+  setIntelCache(key: string, data: unknown): string {
+    const now = new Date().toISOString();
+    this.db.prepare('INSERT INTO intel_cache(key, data, fetched_at) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
+      .run(key, JSON.stringify(data), now);
+    return now;
+  }
+
   deleteSavedConnection(id: string): boolean {
     return this.db.prepare('DELETE FROM saved_connections WHERE id = ?').run(id).changes > 0;
   }
 }
 
 // Singleton instance
-let dbInstance: SQLiteDatabase | null = null;
+// One connection per process. Stored on globalThis because Next.js compiles each
+// route into its own bundle with its own module registry — a module-level
+// variable would open one SQLite connection per route bundle.
+const DB_KEY = '__INDEXSPHERE_SQLITE__';
+
+/** Admins can use every connection; other roles only those listing them in allowed_roles. */
+export function isRoleAllowedForConnection(conn: Pick<SavedConnection, 'allowed_roles'>, role: string): boolean {
+  if (role === 'admin') return true;
+  try {
+    const roles = JSON.parse(conn.allowed_roles ?? '[]');
+    return Array.isArray(roles) && roles.includes(role);
+  } catch {
+    return false;
+  }
+}
 
 export function getDatabase(): SQLiteDatabase {
-  if (!dbInstance) {
-    dbInstance = new SQLiteDatabase();
-  }
-  return dbInstance;
+  const g = globalThis as unknown as Record<string, SQLiteDatabase | undefined>;
+  if (!g[DB_KEY]) g[DB_KEY] = new SQLiteDatabase();
+  return g[DB_KEY]!;
 }
 
 export default SQLiteDatabase;

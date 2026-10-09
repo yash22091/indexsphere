@@ -1,25 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getElasticsearchClient } from '@/lib/elasticsearch';
+import { requireClusterAccess } from '@/lib/cluster-session';
+import { writeAuditLog } from '@/lib/audit';
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  try {
-    const client = getElasticsearchClient();
-    if (!client) {
-      return NextResponse.json(
-        { error: 'No Elasticsearch client available. Please connect first.' },
-        { status: 400 }
-      );
-    }
+  const { name: indexName } = await params;
+  const ctx = requireClusterAccess(request, 'DELETE', `/${encodeURIComponent(indexName)}`);
+  if (ctx instanceof NextResponse) return ctx;
 
-    const { name: indexName } = await params;
-    await client.deleteIndex(indexName);
-    
-    return NextResponse.json({ 
-      success: true, 
-      message: `Index '${indexName}' deleted successfully` 
+  try {
+    await ctx.session.client.deleteIndex(encodeURIComponent(indexName));
+    writeAuditLog(request, 'index:delete', { target: indexName, statusCode: 200 });
+
+    return NextResponse.json({
+      success: true,
+      message: `Index '${indexName}' deleted successfully`
     });
   } catch (error: any) {
     console.error('Error deleting index:', error);
@@ -34,18 +31,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  try {
-    const client = getElasticsearchClient();
-    if (!client) {
-      return NextResponse.json(
-        { error: 'No Elasticsearch client available. Please connect first.' },
-        { status: 400 }
-      );
-    }
+  const { name: indexName } = await params;
+  const ctx = requireClusterAccess(request, 'GET', `/${encodeURIComponent(indexName)}`);
+  if (ctx instanceof NextResponse) return ctx;
 
-    const { name: indexName } = await params;
-    const indexData = await client.getIndex(indexName);
-    
+  try {
+    const indexData = await ctx.session.client.getIndex(encodeURIComponent(indexName));
     return NextResponse.json(indexData);
   } catch (error: any) {
     console.error('Error fetching index:', error);
@@ -60,23 +51,18 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  try {
-    const client = getElasticsearchClient();
-    if (!client) {
-      return NextResponse.json(
-        { error: 'No Elasticsearch client available. Please connect first.' },
-        { status: 400 }
-      );
-    }
+  const { name: indexName } = await params;
+  const ctx = requireClusterAccess(request, 'PUT', `/${encodeURIComponent(indexName)}`);
+  if (ctx instanceof NextResponse) return ctx;
 
-    const { name: indexName } = await params;
+  try {
     const body = await request.json();
-    
-    await client.createIndex(indexName, body);
-    
-    return NextResponse.json({ 
-      success: true, 
-      message: `Index '${indexName}' created successfully` 
+    await ctx.session.client.createIndex(encodeURIComponent(indexName), body);
+    writeAuditLog(request, 'index:create', { target: indexName, statusCode: 200 });
+
+    return NextResponse.json({
+      success: true,
+      message: `Index '${indexName}' created successfully`
     });
   } catch (error: any) {
     console.error('Error creating index:', error);

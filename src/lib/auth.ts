@@ -1,40 +1,72 @@
 import jwt from 'jsonwebtoken';
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/config';
+import { BOOT_NONCE } from '@/lib/boot-session';
+import { getDatabase } from '@/lib/database-sqlite';
+
+export type UserRole = 'admin' | 'user' | 'readonly';
 
 export interface AuthUser {
   id: string;
   username: string;
-  role: string;
+  role: UserRole;
   permissions: string[];
 }
 
-export function verifyToken(token: string): AuthUser | null {
+export function permissionsForRole(role: UserRole): string[] {
+  if (role === 'admin') return ['admin', 'user', 'readonly'];
+  if (role === 'user') return ['user', 'readonly'];
+  return ['readonly'];
+}
+
+interface VerifyOptions {
+  /** Accept tokens whose user still has to change the default password (only /api/auth/*). */
+  allowPendingPasswordChange?: boolean;
+}
+
+/**
+ * Verify a session JWT. Beyond the signature this enforces:
+ *   • the token was issued by the current process boot (restart = logout)
+ *   • the user still exists and is active (deleted/disabled users lose access immediately)
+ *   • role/permissions come from the database, not the token (demotions apply immediately)
+ *   • a pending forced password change blocks everything except /api/auth/*
+ */
+export function verifyToken(token: string, options: VerifyOptions = {}): AuthUser | null {
   try {
     const config = getConfig();
-    const decoded = jwt.verify(token, config.security.jwtSecret) as any;
+    const decoded = jwt.verify(token, config.security.jwtSecret) as Record<string, unknown>;
+    if (decoded.bid !== BOOT_NONCE) return null;
+
+    const userId = (decoded.userId ?? decoded.id) as string | undefined;
+    if (!userId) return null;
+
+    const state = getDatabase().getUserAuthState(userId);
+    if (!state || !state.is_active) return null;
+    if (state.must_change_password && !options.allowPendingPasswordChange) return null;
+
     return {
-      id: decoded.userId ?? decoded.id,
-      username: decoded.username,
-      role: decoded.role ?? (decoded.permissions?.includes('admin') ? 'admin' : 'user'),
-      permissions: decoded.permissions ?? [],
+      id: userId,
+      username: state.username,
+      role: state.role,
+      permissions: permissionsForRole(state.role),
     };
   } catch {
     return null;
   }
 }
 
+function tokenFromRequest(request: NextRequest): string | null {
+  const authHeader = request.headers.get('authorization');
+  if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7);
+  return request.cookies.get('auth-token')?.value ?? null;
+}
+
 export function getUserFromRequest(request: NextRequest): AuthUser | null {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader?.startsWith('Bearer ')) {
-      return verifyToken(authHeader.slice(7));
-    }
-    const tokenCookie = request.cookies.get('auth-token');
-    if (tokenCookie?.value) {
-      return verifyToken(tokenCookie.value);
-    }
-    return null;
+    const token = tokenFromRequest(request);
+    if (!token) return null;
+    const allowPendingPasswordChange = request.nextUrl.pathname.startsWith('/api/auth/');
+    return verifyToken(token, { allowPendingPasswordChange });
   } catch {
     return null;
   }
@@ -49,15 +81,26 @@ export function requireAuth(request: NextRequest): AuthUser {
   return user;
 }
 
+/** True for roles allowed to change cluster or application state (admin, user). */
+export function canWrite(user: AuthUser): boolean {
+  return user.permissions.includes('user');
+}
+
+/** Throws 401/403 unless the user may perform write operations (not readonly). */
+export function requireWriter(request: NextRequest): AuthUser {
+  const user = requireAuth(request);
+  if (!canWrite(user)) {
+    throw NextResponse.json({ error: 'Read-only users cannot perform this action' }, { status: 403 });
+  }
+  return user;
+}
+
 /**
  * Throws a 401/403 NextResponse if the request is not authenticated or the
  * authenticated user does not have the 'admin' permission.
  */
 export function requireAdmin(request: NextRequest): AuthUser {
-  const user = getUserFromRequest(request);
-  if (!user) {
-    throw NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-  }
+  const user = requireAuth(request);
   if (!user.permissions.includes('admin')) {
     throw NextResponse.json({ error: 'Admin permissions required' }, { status: 403 });
   }
@@ -124,7 +167,11 @@ export async function validateRequestHmac(
   const payload  = `${ts}:${method}:${pathname}:${bodyHash}`;
   const expected = await hmacSha256hex(payload, sigKey);
 
-  return expected === sig;
+  // Constant-time comparison
+  if (expected.length !== sig.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
+  return diff === 0;
 }
 
 // ── crypto helpers (mirror of the client-side ones in security-guardian.ts) ──
