@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Best practices** (cross-engine): a graded, read-only review of each server's configuration against the vendor's production recommendations. Elasticsearch/OpenSearch: 24 checks (versions, health, topology, heap, swap, file descriptors, disk watermarks, shards, replicas, ILM/ISM, snapshots, rejections, deprecations). ClickHouse: 27 checks (release support, memory limits and caches, concurrency, DROP guards, backups, parts and mutations, insert batching, schema grades, disks, replication, system-log TTL, guardrails, `system.warnings`). Each check shows current and recommended values; gaps include a copyable fix. Grade and top issues also appear on both overview pages.
+- **ClickHouse operations pages:** Merges & mutations (kill mutation), Storage (disks, policies, partitions with OPTIMIZE FINAL and typed-confirmation DROP PARTITION, TTL, detached parts, dropped tables, dictionaries), Ingestion (per-table insert rate, small-insert detection, async inserts, insert errors, materialized views, Kafka), Replication & cluster (replicas, queue, topology, Keeper, ON CLUSTER DDL, Distributed queues), Server & logs (warnings, text log search, errors, crashes, changed settings, metrics, backups), Users & access (users, grants, roles, quotas, profiles, row policies, logins).
+- **Cluster compare for ClickHouse:** schema, dictionaries, server settings, table sizes and (admins) access control of two servers.
+- Alert metrics `ch_pending_mutations`, `ch_failed_mutations`, `ch_readonly_replicas`, `ch_disk_used_percent`.
+
+### Fixed
+- ClickHouse posture check for `max_execution_time` reported IndexSphere's own per-query limit instead of the user's profile value.
+- Long ClickHouse statements (e.g. `OPTIMIZE … FINAL`) no longer hit the fixed 60 s HTTP timeout; the timeout follows the statement's `max_execution_time`.
+
+### Changed
+- **Sidebar organised by engine.** Sections for *Elasticsearch / OpenSearch* (with *Data operations* and *Reports* sub-sections), *ClickHouse*, *Cross-engine* and *Administration*. Engine headings show `ES` / `CH` tags and a connection dot. Cross-engine pages carry `ES` `CH` tags, and the Elasticsearch-to-ClickHouse migration shows `ES → CH`. The same tags appear in the breadcrumb and the ⌘K palette.
+
 ## [3.0.0] - 2026-10-09
 
 ### Added

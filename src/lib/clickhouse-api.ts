@@ -31,3 +31,39 @@ export function queryOwners(): Map<string, string> {
   if (!g[OWNERS_KEY]) g[OWNERS_KEY] = new Map();
   return g[OWNERS_KEY];
 }
+
+export type Row = Record<string, unknown>;
+
+/**
+ * Run independent dashboard queries in parallel. A section that fails (table
+ * missing on this version, feature not configured, privilege not granted) is
+ * reported in `unavailable` instead of failing the page. If every section
+ * fails, the first error is thrown so the caller returns a real error.
+ */
+export async function runSections<K extends string>(
+  q: (sql: string) => Promise<Row[]>,
+  defs: Record<K, string>,
+): Promise<{ data: Record<K, Row[] | null>; unavailable: { section: K; error: string }[] }> {
+  const keys = Object.keys(defs) as K[];
+  const results = await Promise.allSettled(keys.map(k => q(defs[k])));
+  const data = {} as Record<K, Row[] | null>;
+  const unavailable: { section: K; error: string }[] = [];
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') data[keys[i]] = r.value;
+    else {
+      data[keys[i]] = null;
+      unavailable.push({ section: keys[i], error: r.reason instanceof Error ? r.reason.message.slice(0, 300) : 'failed' });
+    }
+  });
+  if (keys.length && unavailable.length === keys.length) {
+    throw (results[0] as PromiseRejectedResult).reason;
+  }
+  return { data, unavailable };
+}
+
+/** IndexSphere role gate for ClickHouse actions: 'write' = admin or operator, 'admin' = admin only. */
+export function chRoleDenied(role: string, needs: 'write' | 'admin'): NextResponse | null {
+  if (role === 'admin') return null;
+  if (needs === 'write' && role === 'user') return null;
+  return NextResponse.json({ error: needs === 'admin' ? 'Admin required' : 'Operator or admin role required' }, { status: 403 });
+}

@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/contexts/auth-context";
-import { AlertCircle, Database, Loader2, PlugZap, Unplug } from "lucide-react";
+import { AlertCircle, Database, Loader2, PlugZap, RefreshCw as RefreshIcon, Unplug } from "lucide-react";
 
 export interface ClickHouseStatus {
   connected: boolean;
@@ -301,4 +301,126 @@ export function ErrorBanner({ message }: { message: string | null }) {
       <AlertDescription className="break-words">{message}</AlertDescription>
     </Alert>
   );
+}
+
+// ── Building blocks for the operations pages ────────────────────────────────
+
+type AnyRow = Record<string, any>;
+
+export interface Column<T extends AnyRow = AnyRow> {
+  key: string;
+  label: ReactNode;
+  right?: boolean;
+  mono?: boolean;
+  /** Custom cell; defaults to the raw value. */
+  render?: (row: T) => ReactNode;
+  className?: string;
+}
+
+/** Plain, dense table used by the ClickHouse operations pages. */
+export function DataTable<T extends AnyRow>({ rows, columns, empty = "Nothing to show.", maxHeight, rowKey }: {
+  rows: T[] | null | undefined;
+  columns: Column<T>[];
+  empty?: string;
+  maxHeight?: number;
+  rowKey?: (row: T, i: number) => string;
+}) {
+  if (!rows?.length) return <p className="py-6 text-center text-sm text-muted-foreground">{empty}</p>;
+  return (
+    <div className="overflow-auto rounded-lg border" style={maxHeight ? { maxHeight } : undefined}>
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 z-10 bg-muted">
+          <tr>
+            {columns.map(c => (
+              <th key={c.key} className={`whitespace-nowrap border-b px-3 py-2 font-medium ${c.right ? "text-right" : "text-left"}`}>{c.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={rowKey?.(r, i) ?? i} className="border-b last:border-0 hover:bg-muted/40">
+              {columns.map(c => {
+                const v = r[c.key];
+                const content = c.render ? c.render(r) : v === null || v === undefined || v === "" ? <span className="text-muted-foreground">—</span>
+                  : Array.isArray(v) ? v.join(", ") || <span className="text-muted-foreground">—</span>
+                  : typeof v === "object" ? JSON.stringify(v) : String(v);
+                return (
+                  <td key={c.key} className={`px-3 py-2 align-top ${c.right ? "whitespace-nowrap text-right tabular-nums" : ""} ${c.mono ? "font-mono" : ""} ${c.className ?? ""}`}>
+                    {content}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Card wrapper; shows why a section is empty when the server could not provide it. */
+export function Section({ title, description, unavailable, actions, children }: {
+  title: ReactNode;
+  description?: ReactNode;
+  /** Error text from the API's `unavailable` list for this section. */
+  unavailable?: string | null;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-3">
+        <div className="space-y-1.5">
+          <CardTitle className="text-base">{title}</CardTitle>
+          {description && <CardDescription>{description}</CardDescription>}
+        </div>
+        {actions}
+      </CardHeader>
+      <CardContent>
+        {unavailable
+          ? <p className="py-4 text-sm text-muted-foreground">Not available on this server: {unavailable}</p>
+          : children}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** GET a ClickHouse API route; `unavailableFor(section)` returns that section's error, if any. */
+export function useChData<T extends object>(url: string | null) {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const reload = useCallback(async () => {
+    if (!url) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await chFetch<T>(url));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [url]);
+  useEffect(() => { reload(); }, [reload]);
+  const unavailableFor = useCallback(
+    (section: string) => (data as { unavailable?: { section: string; error: string }[] } | null)
+      ?.unavailable?.find(u => u.section === section)?.error ?? null,
+    [data],
+  );
+  return { data, error, loading, reload, unavailableFor };
+}
+
+export function RefreshButton({ loading, onClick, label = "Refresh" }: { loading: boolean; onClick: () => void; label?: string }) {
+  return (
+    <Button variant="outline" size="sm" onClick={onClick} disabled={loading}>
+      {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshIcon className="mr-1.5 h-3.5 w-3.5" />}{label}
+    </Button>
+  );
+}
+
+export function YesNo({ value, invert }: { value: unknown; invert?: boolean }) {
+  const yes = value === true || value === 1 || value === "1" || value === "true";
+  const bad = invert ? yes : false;
+  return <Badge variant="outline" className={bad ? "border-destructive/40 text-destructive" : "font-normal"}>{yes ? "yes" : "no"}</Badge>;
 }

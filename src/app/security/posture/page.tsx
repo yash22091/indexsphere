@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertCircle, Check, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, Copy, Loader2, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -203,7 +204,11 @@ function TargetPanel({ target }: { target: "search" | "clickhouse" }) {
   );
 }
 
-export default function SecurityPosturePage() {
+function SecurityPosture() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const tab = params.get("target") === "clickhouse" ? "clickhouse" : "search";
   return (
     <div className="space-y-6">
       <PageHeader
@@ -211,7 +216,7 @@ export default function SecurityPosturePage() {
         description="Read-only audit of authentication, encryption, privileges, logging and backups, combined with known vulnerabilities for the running version."
         meta={<Badge variant="outline">No passwords are guessed — checks only read configuration</Badge>}
       />
-      <Tabs defaultValue="search">
+      <Tabs value={tab} onValueChange={v => router.replace(v === "clickhouse" ? `${pathname}?target=clickhouse` : pathname)}>
         <TabsList>
           <TabsTrigger value="search">Elasticsearch / OpenSearch</TabsTrigger>
           <TabsTrigger value="clickhouse">ClickHouse</TabsTrigger>
@@ -221,4 +226,8 @@ export default function SecurityPosturePage() {
       </Tabs>
     </div>
   );
+}
+
+export default function SecurityPosturePage() {
+  return <Suspense><SecurityPosture /></Suspense>;
 }

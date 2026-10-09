@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { HealthBadge, PageHeader } from "@/components/app";
 import { AlertCircle, GitCompare, Loader2 } from "lucide-react";
+import { ClickHouseCompare } from "@/components/clickhouse/compare";
 
 interface SavedConnection { id: string | number; name: string; url: string; engine?: string }
 
@@ -113,7 +114,7 @@ function NameList({ names, empty }: { names: string[]; empty: string }) {
   );
 }
 
-export default function ClusterComparePage() {
+function SearchCompare() {
   const [connections, setConnections] = useState<SavedConnection[]>([]);
   const [clusterA, setClusterA] = useState<ClusterInput>(emptyInput());
   const [clusterB, setClusterB] = useState<ClusterInput>(emptyInput());
@@ -158,16 +159,13 @@ export default function ClusterComparePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Cluster compare"
-        description="Compare two Elasticsearch or OpenSearch clusters: indices, templates and cluster settings."
-        actions={
-          <Button onClick={compare} disabled={loading || !ready(clusterA) || !ready(clusterB)}>
-            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <GitCompare className="mr-2 h-4 w-4" />}
-            {loading ? "Comparing…" : "Compare"}
-          </Button>
-        }
-      />
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-sm text-muted-foreground">Indices, templates and cluster settings of two Elasticsearch or OpenSearch clusters.</p>
+        <Button onClick={compare} disabled={loading || !ready(clusterA) || !ready(clusterB)}>
+          {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <GitCompare className="mr-2 h-4 w-4" />}
+          {loading ? "Comparing…" : "Compare"}
+        </Button>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <ClusterInputCard label="Cluster A" value={clusterA} onChange={setClusterA} connections={connections} />
@@ -296,6 +294,25 @@ export default function ClusterComparePage() {
           </Card>
         </div>
       )}
+    </div>
+  );
+}
+
+export default function ClusterComparePage() {
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Cluster compare"
+        description="Compare two servers side by side — for example production and staging, or a cluster before and after a migration."
+      />
+      <Tabs defaultValue="search">
+        <TabsList>
+          <TabsTrigger value="search">Elasticsearch / OpenSearch</TabsTrigger>
+          <TabsTrigger value="clickhouse">ClickHouse</TabsTrigger>
+        </TabsList>
+        <TabsContent value="search" className="mt-4"><SearchCompare /></TabsContent>
+        <TabsContent value="clickhouse" className="mt-4"><ClickHouseCompare /></TabsContent>
+      </Tabs>
     </div>
   );
 }

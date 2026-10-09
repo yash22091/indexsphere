@@ -52,7 +52,13 @@ Avoid connecting as `default`, and never grant `SOURCES` (`url()`, `file()`, `s3
 | **Query activity** | Running queries (admins can kill them), the slowest and failed queries, and the heaviest query patterns from `system.query_log`. Every query has *Open in SQL*. |
 | **SQL workbench** | One statement at a time, `EXPLAIN indexes = 1` and `EXPLAIN ESTIMATE`, cancel, CSV/JSON export, history and a table list showing each table's sort key. |
 | **Table advisor** | Grades every table A–F against the ClickHouse best-practice rules (below). |
-| **Migrate from Elasticsearch** | Plan a table from an index mapping and copy the data (below). |
+| **Merges & mutations** | Running merges with progress, mutations (pending, failing with the reason; admins can **Kill**), the partitions with the most active parts against `parts_to_delay_insert` / `parts_to_throw_insert`, part moves, and merge history for the last 24 h. |
+| **Storage** | Disks with usage, storage policies and volumes; **partitions** of any MergeTree table (rows, size, compression, time range) with **OPTIMIZE … FINAL** (operators, admins) and **Drop partition** (admins, after typing the partition ID); TTL per table; recently dropped tables (with the `UNDROP` statement); detached parts with their reason; dictionaries with status, memory and last error. |
+| **Ingestion** | Rows and inserts per table from `system.part_log`, tables receiving **too-small inserts** (< 1,000 rows per INSERT, ≥ 1 per minute), an insert-rate chart, async-insert buffers and flushes, failed INSERTs by error code, materialized views (source → target), refreshable views, view errors and Kafka consumers. |
+| **Replication & cluster** | Replicated tables (delay, queue, active/total replicas, read-only), stuck or retrying replication-queue entries, cluster topology from `remote_servers`, ClickHouse Keeper sessions, `ON CLUSTER` DDL status and Distributed send queues. Sections that need Keeper say so when it is not configured. |
+| **Server & logs** | `system.warnings`, the server log (`system.text_log`, filter by level, time window and text), errors by type, crashes with stack traces, the connected profile's query settings, server and MergeTree settings changed from defaults, every metric/event/async metric (searchable), and backup history. |
+| **Users & access** | Users (authentication type, allowed hosts, default roles), grants (filterable), roles and role assignments, quota usage, settings profiles, row policies and logins/failed logins in the last 24 h. Read-only; operators and admins only. Change access with SQL in the workbench. |
+| **ES to ClickHouse** (in *Cross-engine*) | Plan a table from an index mapping and copy the data (below). |
 
 ## SQL workbench safety
 
@@ -95,7 +101,7 @@ Every finding names its rule (linked to the rule text) and includes the SQL to f
 
 Both connections are needed: the source search cluster and the target ClickHouse.
 
-1. **Plan.** Open **ClickHouse → Migrate from Elasticsearch**, pick an index or pattern (e.g. `logs-*`), a target database and table, and keep **Analyze field cardinality** on. IndexSphere reads the mapping and proposes the table:
+1. **Plan.** Open **Cross-engine → ES to ClickHouse**, pick an index or pattern (e.g. `logs-*`), a target database and table, and keep **Analyze field cardinality** on. IndexSphere reads the mapping and proposes the table:
    - **Native types.** `date` → `DateTime64(3)`, `ip` → `IPv6`, numbers → sized integers, `scaled_float` → `Decimal`, `geo_point` → `Point`, dynamic objects → `JSON`.
    - **`LowCardinality(String)`** for keyword fields (and text fields with a `.keyword` sub-field) that have fewer than 10K distinct values, measured with a read-only aggregation.
    - **No `Nullable`**; missing values get defaults.

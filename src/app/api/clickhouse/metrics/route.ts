@@ -39,6 +39,18 @@ export async function GET(request: NextRequest) {
       qps = num(l?.qps); insertRows = num(l?.insert_rows); failed5m = num(l?.failed);
     } catch { /* optional */ }
 
+    // Health counters for alerting — optional, like the query_log rates
+    let h: Row | undefined;
+    try {
+      [h] = (await session.client.query<Row>(`
+        SELECT
+          (SELECT count() FROM system.mutations WHERE NOT is_done) AS pending_mutations,
+          (SELECT count() FROM system.mutations WHERE NOT is_done AND latest_fail_reason != '') AS failed_mutations,
+          (SELECT count() FROM system.replicas WHERE is_readonly OR is_session_expired) AS readonly_replicas,
+          (SELECT min(free_space / total_space) FROM system.disks WHERE total_space > 0 AND total_space < 1e18) AS min_free_ratio`,
+      { role: user.role })).data;
+    } catch { /* optional */ }
+
     const memTotal = num(m?.memory_total);
     const metrics = {
       ch_running_queries: num(m?.running_queries),
@@ -51,6 +63,10 @@ export async function GET(request: NextRequest) {
       ch_queries_per_sec: Math.round(qps * 100) / 100,
       ch_insert_rows_per_sec: Math.round(insertRows),
       ch_failed_queries_5m: failed5m,
+      ch_pending_mutations: num(h?.pending_mutations),
+      ch_failed_mutations: num(h?.failed_mutations),
+      ch_readonly_replicas: num(h?.readonly_replicas),
+      ch_disk_used_percent: h?.min_free_ratio === null || h?.min_free_ratio === undefined ? 0 : Math.round((1 - num(h.min_free_ratio)) * 1000) / 10,
     };
 
     evaluateAlerts(metrics, session.savedConnectionId).catch(console.warn);

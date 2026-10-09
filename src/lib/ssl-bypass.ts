@@ -46,6 +46,8 @@ export interface ClusterFetchOptions {
   body?: string;
   /** Verify the server certificate. Defaults to false (on-prem self-signed certs). */
   verifyTls?: boolean;
+  /** Socket inactivity timeout; defaults to CLUSTER_REQUEST_TIMEOUT_MS (60 s). */
+  timeoutMs?: number;
 }
 
 export interface ClusterResponse {
@@ -96,7 +98,7 @@ function fetchOnce(url: string, options: ClusterFetchOptions): Promise<ClusterRe
       },
       agent,
       lookup: guardedLookup as unknown as https.RequestOptions['lookup'],
-      timeout: REQUEST_TIMEOUT_MS,
+      timeout: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     };
 
     const client = isHttps ? https : http;
@@ -143,7 +145,7 @@ function fetchOnce(url: string, options: ClusterFetchOptions): Promise<ClusterRe
     });
 
     req.on('timeout', () => {
-      req.destroy(new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`));
+      req.destroy(new Error(`Request timed out after ${(options.timeoutMs ?? REQUEST_TIMEOUT_MS) / 1000}s`));
     });
 
     req.on('error', (err: NodeJS.ErrnoException) => {

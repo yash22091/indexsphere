@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { VulnerabilityBanner } from "@/components/security/vulnerability-banner";
+import { ReviewSummaryCard } from "@/components/best-practices/review-view";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import {
   ClickHouseGate, ClickHouseHeader, ClickHouseStatus, chFetch, formatBytes, formatCompact, formatDuration,
   formatMs, formatNumber, MiniChart, StatTile, ErrorBanner,
 } from "@/components/clickhouse/shared";
-import { FolderTree, Info, Lightbulb, ListTree, Loader2, RefreshCw, Shuffle, Terminal } from "lucide-react";
+import { Combine, FileText, FolderTree, HardDrive, Import, Info, Lightbulb, ListTree, Loader2, Network, RefreshCw, Shuffle, Terminal } from "lucide-react";
 
 type Row = Record<string, any>;
 
@@ -149,6 +150,11 @@ function OverviewContent({ status, disconnect }: { status: ClickHouseStatus; dis
           { href: "/clickhouse/queries", label: "Query activity", icon: ListTree },
           { href: "/clickhouse/sql", label: "SQL workbench", icon: Terminal },
           { href: "/clickhouse/advisor", label: "Table advisor", icon: Lightbulb },
+          { href: "/clickhouse/merges", label: "Merges & mutations", icon: Combine },
+          { href: "/clickhouse/storage", label: "Storage", icon: HardDrive },
+          { href: "/clickhouse/ingestion", label: "Ingestion", icon: Import },
+          { href: "/clickhouse/replication", label: "Replication", icon: Network },
+          { href: "/clickhouse/server", label: "Server & logs", icon: FileText },
           { href: "/clickhouse/migrate", label: "Migrate from Elasticsearch", icon: Shuffle },
         ].map(l => (
           <Link key={l.href} href={l.href}>
@@ -238,6 +244,8 @@ function OverviewContent({ status, disconnect }: { status: ClickHouseStatus; dis
           )}
         </>
       )}
+
+      <ReviewSummaryCard target="clickhouse" />
 
       <Card>
         <CardHeader className="pb-2">

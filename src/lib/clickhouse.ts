@@ -23,7 +23,8 @@ export interface ClickHouseConfig {
 export interface QueryOptions {
   /** ClickHouse query parameters, referenced as {name:Type} in the SQL. */
   params?: Record<string, string | number>;
-  settings?: Record<string, string | number>;
+  /** Per-query settings; `null` leaves a default safety setting unset (to read profile values). */
+  settings?: Record<string, string | number | null>;
   /** Caller's IndexSphere role — readonly users get server-enforced readonly=2. */
   role?: UserRole;
   database?: string;
@@ -83,13 +84,13 @@ export class ClickHouseClient {
   async query<T = Record<string, unknown>>(sql: string, opts: QueryOptions = {}): Promise<QueryResult<T>> {
     const queryId = opts.queryId ?? `indexsphere-${randomUUID()}`;
     const qs = new URLSearchParams();
-    const settings: Record<string, string | number> = {
+    const settings: Record<string, string | number | null> = {
       ...SAFETY_SETTINGS,
       wait_end_of_query: 1, // buffer so errors surface as HTTP status, not mid-stream
       output_format_json_quote_64bit_integers: opts.numeric64 === false ? 1 : 0,
       ...opts.settings,
     };
-    for (const [k, v] of Object.entries(settings)) qs.set(k, String(v));
+    for (const [k, v] of Object.entries(settings)) if (v !== null) qs.set(k, String(v));
     // Applied last so nothing above can relax it
     if (opts.role === 'readonly') qs.set('readonly', '2');
     for (const [k, v] of Object.entries(opts.params ?? {})) qs.set(`param_${k}`, String(v));
@@ -98,7 +99,11 @@ export class ClickHouseClient {
     const db = opts.database ?? this.database;
     if (db) qs.set('database', db);
 
+    // wait_end_of_query buffers the whole result, so the socket is silent until
+    // the query ends: allow at least the query's own time limit
+    const limit = Number(settings.max_execution_time);
     const response = await sslBypassFetch(`${this.baseUrl}/?${qs.toString()}`, {
+      timeoutMs: limit > 45 ? (limit + 15) * 1000 : undefined,
       method: 'POST',
       body: sql,
       headers: {
@@ -164,6 +169,20 @@ export class ClickHouseClient {
       const code = Number((response.headers?.['x-clickhouse-exception-code'] as string) ?? NaN);
       throw new ClickHouseError(cleanError(await response.text()), Number.isNaN(code) ? undefined : code, response.status);
     }
+  }
+
+  /**
+   * Values of settings as the user's settings profile defines them. A normal
+   * query would report IndexSphere's own per-query safety limits instead.
+   */
+  async profileSettings(names: string[], role?: UserRole): Promise<Record<string, unknown>[]> {
+    const unset = Object.fromEntries(Object.keys(SAFETY_SETTINGS).map(k => [k, null]));
+    const r = await this.query('SELECT name, value, changed FROM system.settings WHERE has({names:Array(String)}, name)', {
+      role,
+      settings: unset,
+      params: { names: `[${names.map(n => `'${n.replace(/[\\']/g, '')}'`).join(',')}]` },
+    });
+    return r.data;
   }
 
   async ping(): Promise<{ version: string; uptime: number }> {

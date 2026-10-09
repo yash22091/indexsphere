@@ -45,7 +45,7 @@ The account IndexSphere uses on the cluster still applies on top of this. Give e
 
 ## Security posture audit
 
-**Security → Security posture** audits a connected server read-only. It never tries passwords: guessing would trip lockouts and SIEM alerts. It only inspects configuration the connected account can read; checks it cannot run are listed as *skipped*.
+**Cross-engine → Security posture** audits a connected server read-only. It never tries passwords: guessing would trip lockouts and SIEM alerts. It only inspects configuration the connected account can read; checks it cannot run are listed as *skipped*.
 
 **Elasticsearch / OpenSearch checks**
 
@@ -86,7 +86,7 @@ The account IndexSphere uses on the cluster still applies on top of this. Give e
 
 ## Configuration drift
 
-**Security → Configuration drift** keeps a history of each server's configuration.
+**Cross-engine → Configuration drift** keeps a history of each server's configuration.
 
 - **What a snapshot covers.**
   - **Search clusters:** cluster settings, index/component/legacy templates, ingest pipelines, ILM/ISM policies, aliases, snapshot repositories, each index's behaviour settings and a fingerprint of its mapping, security roles, role mappings and users (no password hashes).

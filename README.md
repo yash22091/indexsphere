@@ -27,15 +27,17 @@ Manage the clusters, grade their design, audit their security and move data betw
 **Elasticsearch / OpenSearch**
 - **Inspect:** overview, cluster health, scored cluster analysis, live monitoring (SSE), nodes, indices, shards with allocation explanations.
 - **Tune and query:** index advisor, query workbench (profile tree, score explain), AI query builder (PII redaction), search analytics, aliases/templates/ILM/ISM/snapshots.
-- **Change data:** reindex wizard, bulk operations, delete-by-query with dry run, data migration, cluster compare.
+- **Change data:** reindex wizard, bulk operations, delete-by-query with dry run, data migration.
 
 **ClickHouse**
 - **Inspect:** overview with live metrics, database/table explorer.
 - **Query:** query activity (slow, failed, heaviest patterns, kill), SQL workbench with safety limits, EXPLAIN and server-side cancel.
+- **Operate:** merges & mutations (kill), storage (disks, policies, partitions with optimize/drop, TTL, detached parts, dictionaries), ingestion (insert batching, async inserts, materialized views, Kafka), replication & Keeper, server log/errors/settings/metrics/backups, users & access.
 - **Improve:** table advisor, migration from Elasticsearch.
 
-**Security**
-- Security posture, vulnerabilities, configuration drift, audit trail.
+**Cross-engine**
+- **Best practices:** a graded review of each server's configuration against the vendor's production recommendations, with current vs recommended values and the fix for every gap.
+- Security posture, vulnerabilities, configuration drift, cluster compare (ES and ClickHouse), audit trail.
 
 **Alerts & reports**
 - Alert rules on search-cluster and ClickHouse metrics (email, Slack, webhook), scheduled CSV/JSON reports, on-demand PDF reports.

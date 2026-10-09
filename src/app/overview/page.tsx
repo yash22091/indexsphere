@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { VulnerabilityBanner } from "@/components/security/vulnerability-banner";
+import { ReviewSummaryCard } from "@/components/best-practices/review-view";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -301,6 +302,8 @@ export default function OverviewPage() {
           </CardContent>
         </Card>
       )}
+
+      {isConnected && clusterHealth && <ReviewSummaryCard target="search" />}
 
       {clusterStats && (
         <div className="grid gap-6 md:grid-cols-2">

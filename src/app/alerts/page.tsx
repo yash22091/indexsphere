@@ -31,6 +31,7 @@ const METRICS = [
   "cpu_percent","heap_percent","gc_pressure","unassigned_shards","indexing_rate","node_count",
   "ch_running_queries","ch_memory_percent","ch_max_parts_per_partition","ch_replica_delay_seconds",
   "ch_failed_queries_5m","ch_queries_per_sec","ch_insert_rows_per_sec","ch_merges_running","ch_load1",
+  "ch_pending_mutations","ch_failed_mutations","ch_readonly_replicas","ch_disk_used_percent",
 ];
 const OPERATORS = [{ v: "gt", l: ">" }, { v: "lt", l: "<" }, { v: "gte", l: ">=" }, { v: "lte", l: "<=" }];
 const SEVERITIES = ["info","warning","critical"];

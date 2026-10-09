@@ -75,6 +75,17 @@ Role column: **any** = any signed-in user; **user** = `user` or `admin`; **admin
 | POST | `/clickhouse/query` | any (role-checked) | `{sql, database?, mode: run, explain or estimate, maxRows?, clientQueryId?}` |
 | POST | `/clickhouse/query/cancel` | owner / admin | `{clientQueryId}` |
 | GET / POST | `/clickhouse/advisor` | any | Grade tables (`?database=`) / deep-analyze one `{database, table}` |
+| GET | `/clickhouse/merges` | any | Running merges, mutations, parts per partition, moves, 24 h merge history |
+| POST | `/clickhouse/merges/kill-mutation` | admin | `{database, table, mutationId}` |
+| GET | `/clickhouse/storage` | any | Disks, storage policies, tables with TTL, detached parts, dropped tables, dictionaries |
+| GET | `/clickhouse/storage/partitions?database=&table=` | any | Partitions of one MergeTree table |
+| POST | `/clickhouse/storage/partition` | user (optimize) / admin (drop) | `{database, table, partitionId, action: optimize or drop}` |
+| GET | `/clickhouse/ingestion?hours=` | any | Inserts per table, timeline, async inserts, insert errors, materialized views, Kafka |
+| GET | `/clickhouse/replication` | any | Replicas, replication queue, clusters, Keeper, ON CLUSTER DDL, Distributed queues |
+| GET | `/clickhouse/access` | user | Users, roles, grants, quotas, settings profiles, row policies, logins |
+| GET | `/clickhouse/server` | any | Warnings, errors, crashes, changed settings, metrics, backups, build |
+| GET | `/clickhouse/server/logs?level=&minutes=&q=` | any | Server log from `system.text_log` (max 500 lines) |
+| POST | `/clickhouse/compare` | any | `{a, b}` — each `"session"` or a saved ClickHouse connection id; access-control sections admin-only |
 | POST | `/clickhouse/migrate` | any (create: user) | Plan `{index, database, table, naming?, analyzeCardinality?, create?}` |
 | GET / POST | `/clickhouse/migrate/jobs` | any / user | List / start a copy `{index, database, table, createTable?, insertBatch?, maxDocs?}` |
 | GET / DELETE | `/clickhouse/migrate/jobs/{id}` | owner / admin | Job status / cancel |
@@ -84,6 +95,7 @@ Role column: **any** = any signed-in user; **user** = `user` or `admin`; **admin
 | Method | Path | Role | Description |
 |---|---|---|---|
 | GET | `/security/posture?target=search\|clickhouse` | any | Posture audit of your connected server |
+| GET | `/best-practices?target=search\|clickhouse` | any | Best-practice configuration review (cached 60 s; `&refresh=1` re-runs) |
 | GET | `/vulnerabilities?target=search\|clickhouse` | any | Vulnerabilities for your connected server's version(s) |
 | GET | `/vulnerabilities?product=&version=` | any | Manual lookup |
 | POST | `/vulnerabilities` | admin | Same, bypassing the 24 h cache |

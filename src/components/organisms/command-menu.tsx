@@ -8,6 +8,7 @@ import {
   CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator,
 } from "@/components/ui/command";
 import { NAV_GROUPS } from "@/constants/navigation";
+import { EngineTags } from "@/components/app";
 import { useAuth } from "@/contexts/auth-context";
 
 /** ⌘K / Ctrl+K palette: jump to any page, switch theme, sign out. */
@@ -48,6 +49,9 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
               >
                 <item.icon className="mr-2 h-4 w-4 text-muted-foreground" />
                 {item.title}
+                <span className="ml-auto">
+                  <EngineTags engines={item.engines ?? (group.engine ? [group.engine] : undefined)} flow={item.flow} />
+                </span>
               </CommandItem>
             ))}
           </CommandGroup>

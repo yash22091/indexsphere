@@ -390,7 +390,8 @@ export async function auditClickHouse(client: ClickHouseClient, role: UserRole, 
     a.skip('ch-external-grants', 'Privileges', 'system.grants not readable (needs SHOW USERS privilege)');
   }
 
-  const limits = await q(`SELECT name, value FROM system.settings WHERE name IN ('max_execution_time', 'max_memory_usage', 'readonly')`);
+  // profileSettings: a plain query would see IndexSphere's own per-query limits
+  const limits = await client.profileSettings(['max_execution_time', 'max_memory_usage'], role).catch(() => null);
   if (limits) {
     const v = Object.fromEntries(limits.map(r => [String(r.name), String(r.value)]));
     if (v.max_execution_time === '0') {

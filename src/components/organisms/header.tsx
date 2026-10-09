@@ -9,6 +9,7 @@ import {
   Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { findNavItem } from "@/constants/navigation";
+import { EngineTag, EngineTags } from "@/components/app";
 import { CommandMenu } from "./command-menu";
 
 interface HeaderProps {
@@ -32,7 +33,11 @@ export function Header({ onMenuClick }: HeaderProps) {
             <>
               <BreadcrumbItem className="hidden md:block text-muted-foreground">{current.group.label}</BreadcrumbItem>
               <BreadcrumbSeparator className="hidden md:block" />
-              <BreadcrumbItem><BreadcrumbPage className="truncate">{current.item.title}</BreadcrumbPage></BreadcrumbItem>
+              <BreadcrumbItem className="min-w-0 gap-2">
+                {current.group.engine && <EngineTag engine={current.group.engine} solid />}
+                <BreadcrumbPage className="truncate">{current.item.title}</BreadcrumbPage>
+                <EngineTags engines={current.item.engines} flow={current.item.flow} />
+              </BreadcrumbItem>
             </>
           ) : (
             <BreadcrumbItem><BreadcrumbPage>IndexSphere</BreadcrumbPage></BreadcrumbItem>

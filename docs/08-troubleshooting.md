@@ -81,6 +81,9 @@ Find the message you see, then follow the fix. If nothing matches, check `docker
 | `PDF generator is busy, please retry in a moment` (429) | More than `PDF_MAX_CONCURRENCY` PDFs at once. Retry, or raise it (each needs about 200 MB). |
 | PDF fails with a Chromium error | Check `PUPPETEER_EXECUTABLE_PATH` (Docker: `/usr/bin/chromium-browser`). For source installs, run `npx puppeteer browsers install chrome`. |
 | Alerts never fire | Rules are evaluated while *Live monitoring* (search metrics) or *ClickHouse overview* (`ch_*` metrics) is open. Also check the cooldown (`window_minutes`) and the rule's metric type. |
+| A ClickHouse page section says *Not available on this server* | The system table behind it is disabled (`text_log`, `session_log`, `crash_log`, `backup_log`, `part_log` in the server config), needs ClickHouse Keeper (`zookeeper_connection`, `distributed_ddl_queue`), or the connected user lacks the privilege. The rest of the page still works. |
+| *Best practices* lists checks as *skipped* | The connected account cannot read that API or system table (e.g. `_nodes`, `_cluster/settings`, `system.server_settings`). Connect with a monitoring account that can, then **Run review**. |
+| *Drop partition* fails with "size exceeds max_partition_size_to_drop" | ClickHouse's own safety limit (50 GB by default). Raise it for that session on the server, or drop the data with TTL. |
 | Webhook rejected: `URL rejected: Destination not allowed` | Webhook URLs follow the same outbound rules as cluster URLs. |
 
 ## Performance and memory

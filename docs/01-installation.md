@@ -137,7 +137,7 @@ PDF reports need a Chromium. `npm ci` downloads one for Puppeteer. To use the sy
 1. Open IndexSphere and sign in as **`admin` / `admin`**. To choose a different initial password, set `ADMIN_DEFAULT_PASSWORD` before the first start.
 2. You must change the password before anything else works, and the API refuses all other calls until you do.
 3. Create the other accounts under **Advanced → User Management**. Roles are described in [Security](06-security.md#roles).
-4. Add your clusters under **Advanced → Connections** (see the [User Guide](03-user-guide.md#connecting-to-a-cluster)).
+4. Add your clusters under **Administration → Connections** (see the [User Guide](03-user-guide.md#connecting-to-a-cluster)).
 
 The `admin/admin` default only applies while the data volume is empty. Once the password is changed it is never reset unless the volume is deleted.
 

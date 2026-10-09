@@ -11,8 +11,8 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
   DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { BrandMark, BrandName, StatusDot } from "@/components/app";
-import { NAV_GROUPS, findNavItem } from "@/constants/navigation";
+import { BrandMark, BrandName, EngineTag, EngineTags, StatusDot } from "@/components/app";
+import { ENGINE_LABEL, NAV_GROUPS, findNavItem } from "@/constants/navigation";
 import { useConnection } from "@/contexts/connection-context";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
@@ -130,23 +130,41 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               const items = group.items.filter(i => !i.adminOnly || isAdmin);
               if (!items.length) return null;
               const isCollapsed = collapsed[group.id] && active?.group.id !== group.id;
+              const engineConnected = group.engine === "search" ? isConnected : group.engine === "clickhouse" ? ch.connected : undefined;
               return (
-                <div key={group.id}>
+                <div key={group.id} data-nav-group={group.id}>
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.id)}
-                    className="flex w-full items-center justify-between rounded-md px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                    title={group.hint ? `${group.label} — ${group.hint}` : group.label}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
                     aria-expanded={!isCollapsed}
                   >
-                    {group.label}
-                    <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", isCollapsed && "-rotate-90")} />
+                    {group.engine && <EngineTag engine={group.engine} solid />}
+                    <span className="min-w-0 flex-1 truncate text-left">{group.navLabel ?? group.label}</span>
+                    {engineConnected !== undefined && (
+                      <span
+                        className="flex items-center"
+                        title={engineConnected ? `${ENGINE_LABEL[group.engine!].long}: connected` : `${ENGINE_LABEL[group.engine!].long}: not connected`}
+                      >
+                        <StatusDot status={engineConnected ? "green" : undefined} />
+                        <span className="sr-only">{engineConnected ? "connected" : "not connected"}</span>
+                      </span>
+                    )}
+                    <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", isCollapsed && "-rotate-90")} />
                   </button>
                   {!isCollapsed && (
                     <ul className="mt-1 space-y-0.5">
-                      {items.map(item => {
+                      {items.map((item, idx) => {
                         const isActive = active?.item.href === item.href;
+                        const showSection = !!item.section && item.section !== items[idx - 1]?.section;
                         return (
                           <li key={item.href}>
+                            {showSection && (
+                              <div className="px-2 pb-1 pt-2.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                                {item.section}
+                              </div>
+                            )}
                             <Link
                               href={item.href}
                               onClick={onClose}
@@ -159,7 +177,8 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                               )}
                             >
                               <item.icon className={cn("h-4 w-4 shrink-0", isActive ? "text-foreground" : "text-muted-foreground")} />
-                              <span className="truncate">{item.title}</span>
+                              <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                              <EngineTags engines={item.engines} flow={item.flow} />
                             </Link>
                           </li>
                         );
