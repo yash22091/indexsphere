@@ -41,11 +41,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/auth/change-password', request.url));
   }
 
+  // The sign-in page is always reachable. Middleware can only decode the cookie,
+  // not verify it (a logged-out, expired-session or pre-restart cookie still
+  // decodes), so the page itself asks the server and redirects if the session is real.
   if (publicRoutes.includes(pathname)) {
-    // If user is already authenticated and trying to access auth page, redirect to connect
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/connect", request.url));
-    }
     return NextResponse.next();
   }
 

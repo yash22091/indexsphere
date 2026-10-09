@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -23,6 +23,19 @@ function SignInForm() {
   // Only same-origin paths are accepted as a redirect target
   const requested = searchParams.get("redirect");
   const redirectPath = requested && requested.startsWith("/") && !requested.startsWith("//") ? requested : "/overview";
+
+  // Already signed in (verified by the server, not just a cookie being present)? Go straight in.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/verify", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d?.authenticated) return;
+        router.replace(d.user?.mustChangePassword ? "/auth/change-password" : redirectPath);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [router, redirectPath]);
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

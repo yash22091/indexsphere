@@ -17,7 +17,7 @@ interface AuthContextType {
   isLoading: boolean;
   mustChangePassword: boolean;
   login: (credentials: LoginCredentials) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   checkAuth: () => boolean;
 }
 

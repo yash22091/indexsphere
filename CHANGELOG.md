@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scheduled-report status display.
 - `INDEXSPHERE_DB_PATH` was ignored.
 - Login was impossible over plain HTTP; `COOKIE_SECURE` was added.
+- Signing out could land on Quick connect instead of the sign-in page (logout wasn't awaited, and the sign-in page trusted an unverified cookie). Expired or pre-restart sessions now go straight to sign-in.
 
 ## [2.0.0] - 2026-03-17
 

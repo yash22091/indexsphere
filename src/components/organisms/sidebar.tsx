@@ -70,8 +70,10 @@ export function Sidebar({ open, onClose }: SidebarProps) {
     return () => { cancelled = true; };
   }, [pathname]);
 
-  const signOut = () => {
-    logout();
+  // Wait until the server has cleared the session cookie, otherwise /auth still
+  // sees the old cookie and redirects back into the app
+  const signOut = async () => {
+    await logout();
     window.location.href = "/auth";
   };
 

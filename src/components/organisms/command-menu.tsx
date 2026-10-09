@@ -28,9 +28,9 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onOpenChange]);
 
-  const run = (fn: () => void) => {
+  const run = (fn: () => void | Promise<void>) => {
     onOpenChange(false);
-    fn();
+    void fn();
   };
 
   return (
@@ -56,7 +56,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
         <CommandGroup heading="Preferences">
           <CommandItem value="theme light" onSelect={() => run(() => setTheme("light"))}><Sun className="mr-2 h-4 w-4" />Light theme</CommandItem>
           <CommandItem value="theme dark" onSelect={() => run(() => setTheme("dark"))}><Moon className="mr-2 h-4 w-4" />Dark theme</CommandItem>
-          <CommandItem value="sign out logout" onSelect={() => run(() => { logout(); window.location.href = "/auth"; })}>
+          <CommandItem value="sign out logout" onSelect={() => run(async () => { await logout(); window.location.href = "/auth"; })}>
             <LogOut className="mr-2 h-4 w-4" />Sign out
           </CommandItem>
         </CommandGroup>
