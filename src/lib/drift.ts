@@ -49,7 +49,14 @@ export function hashSections(sections: Sections): string {
 // ── Capture: Elasticsearch / OpenSearch ──────────────────────────────────────
 
 async function tryReq<T>(client: ElasticsearchClient, path: string): Promise<T | null> {
-  try { return await client.request(path) as T; } catch { return null; }
+  try {
+    return await client.request(path) as T;
+  } catch (err) {
+    // OpenSearch answers 404 on list endpoints (e.g. _ingest/pipeline) when nothing exists yet:
+    // that is an empty section, not an unreadable one
+    if (/Request failed: 404/.test(err instanceof Error ? err.message : '')) return {} as T;
+    return null;
+  }
 }
 
 export async function captureSearchSnapshot(client: ElasticsearchClient): Promise<DriftSnapshotData> {

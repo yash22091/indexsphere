@@ -362,9 +362,12 @@ export class ElasticsearchClient {
     }
   }
 
+  /** Allocation explanation for the first unassigned shard, or null when every shard is assigned. */
   async getClusterAllocation() {
     try {
-      return this.request('/_cluster/allocation/explain');
+      const health = await this.request('/_cluster/health') as { unassigned_shards?: number };
+      if (!health.unassigned_shards) return null; // nothing to explain (the API would answer 400)
+      return await this.request('/_cluster/allocation/explain');
     } catch (error) {
       console.warn('Could not fetch allocation information:', error);
       return null;
@@ -373,7 +376,7 @@ export class ElasticsearchClient {
 
   async getIndicesSettings() {
     try {
-      return this.request('/_all/_settings');
+      return await this.request('/_all/_settings');
     } catch (error) {
       console.warn('Could not fetch index settings:', error);
       return null;
@@ -382,7 +385,7 @@ export class ElasticsearchClient {
 
   async getClusterPendingTasks() {
     try {
-      return this.request('/_cluster/pending_tasks');
+      return await this.request('/_cluster/pending_tasks');
     } catch (error) {
       console.warn('Could not fetch pending tasks:', error);
       return null;
@@ -391,7 +394,7 @@ export class ElasticsearchClient {
 
   async getHotThreads() {
     try {
-      return this.request('/_nodes/hot_threads?threads=10&type=cpu');
+      return await this.request('/_nodes/hot_threads?threads=10&type=cpu');
     } catch (error) {
       console.warn('Could not fetch hot threads:', error);
       return null;
@@ -400,7 +403,7 @@ export class ElasticsearchClient {
 
   async getThreadPoolStats() {
     try {
-      return this.request('/_nodes/stats/thread_pool');
+      return await this.request('/_nodes/stats/thread_pool');
     } catch (error) {
       console.warn('Could not fetch thread pool stats:', error);
       return null;
@@ -409,7 +412,7 @@ export class ElasticsearchClient {
 
   async getSegmentInfo() {
     try {
-      return this.request('/_cat/segments?format=json&v');
+      return await this.request('/_cat/segments?format=json&v');
     } catch (error) {
       console.warn('Could not fetch segment information:', error);
       return null;
@@ -439,7 +442,8 @@ export class ElasticsearchClient {
   }
 
   async getTask(taskId: string) {
-    return this.request(`/_tasks/${taskId}?detailed=true`);
+    // Single-task lookup returns full details; Elasticsearch rejects ?detailed here (it is only valid when listing tasks)
+    return this.request(`/_tasks/${taskId}`);
   }
 
   async cancelTask(taskId: string) {

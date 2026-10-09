@@ -131,14 +131,20 @@ export default function ShardsPage() {
       const shardsResponse = await client.request('/_cat/shards?h=index,shard,prirep,state,docs,store,ip,node&format=json');
       setShards(shardsResponse || []);
       
-      // Load cluster allocation explanation for unassigned shards
-      try {
-        const allocationResponse = await client.request('/_cluster/allocation/explain', {
-          method: 'GET'
-        });
-        setAllocationExplanation(allocationResponse);
-      } catch (allocError) {
-        console.warn('Could not get allocation explanation:', allocError);
+      // Allocation explain only has something to explain when a shard is unassigned
+      // (Elasticsearch/OpenSearch answer 400 otherwise)
+      const unassigned = (shardsResponse || []).some((sh: { state?: string }) => sh.state === 'UNASSIGNED');
+      if (unassigned) {
+        try {
+          const allocationResponse = await client.request('/_cluster/allocation/explain', {
+            method: 'GET'
+          });
+          setAllocationExplanation(allocationResponse);
+        } catch (allocError) {
+          console.warn('Could not get allocation explanation:', allocError);
+        }
+      } else {
+        setAllocationExplanation(null);
       }
       
     } catch (err: any) {

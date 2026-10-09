@@ -21,8 +21,10 @@ import {
 } from "@/lib/security-guardian";
 import { ShieldOff, Bug, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/auth-context";
 
 export default function SecurityGuard() {
+  const { isAuthenticated, mustChangePassword } = useAuth();
   const [lockEnabled, setLockEnabled] = useState(false);
   const [devToolsDetected, setDevToolsDetected] = useState(false);
   const [debugActive, setDebugActive] = useState(false);
@@ -38,15 +40,6 @@ export default function SecurityGuard() {
     const cached = readLockState();
     if (cached !== null) setLockEnabled(cached);
 
-    // 3. Fetch authoritative state from server
-    fetch("/api/settings/security", { credentials: "include" })
-      .then(r => r.json())
-      .then(d => {
-        const enabled = d.lockEnabled ?? false;
-        setLockEnabled(enabled);
-        writeLockState(enabled); // keep cache in sync
-      })
-      .catch(() => {});
 
     // 4. Listen for storage events fired by the auth-config page when the
     //    user toggles the lock, so this component reacts immediately.
@@ -56,6 +49,21 @@ export default function SecurityGuard() {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
+
+  // 3. Authoritative state from the server — only once signed in (the endpoint
+  //    requires a session; asking from the sign-in page would just get a 401)
+  useEffect(() => {
+    if (!isAuthenticated || mustChangePassword) return;
+    fetch("/api/settings/security", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!d) return;
+        const enabled = d.lockEnabled ?? false;
+        setLockEnabled(enabled);
+        writeLockState(enabled); // keep cache in sync
+      })
+      .catch(() => {});
+  }, [isAuthenticated, mustChangePassword]);
 
   // React to lock state
   useEffect(() => {

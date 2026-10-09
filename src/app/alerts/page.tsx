@@ -97,10 +97,14 @@ export default function AlertsPage() {
     try {
       const url = editing ? `/api/alerts/${editing.id}` : "/api/alerts";
       const method = editing ? "PUT" : "POST";
-      const payload = { ...form, threshold: Number(form.threshold), window_minutes: Number(form.window_minutes), channels: form.channels.map(toApiChannel) };
+      // An address typed into the channel field but not yet added with "+" still counts —
+      // otherwise the rule would silently be saved without that notification
+      const channels = newChan.value.trim() ? [...form.channels, { ...newChan, value: newChan.value.trim() }] : form.channels;
+      const payload = { ...form, threshold: Number(form.threshold), window_minutes: Number(form.window_minutes), channels: channels.map(toApiChannel) };
       const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const d = await r.json();
       if (d.error) throw new Error(d.error);
+      setNewChan({ type: newChan.type, value: "" });
       setOpen(false); load();
     } catch (e) { setFormError(e instanceof Error ? e.message : "Save failed"); }
     finally { setSaving(false); }
