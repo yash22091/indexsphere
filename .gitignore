@@ -97,3 +97,6 @@ certs/*.cert
 # Local SQLite database (users, encrypted connection passwords)
 data/*.db
 data/*.db-*
+
+# Blog drafts and screenshots (not part of the product)
+blog/
